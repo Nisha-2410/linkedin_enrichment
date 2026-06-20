@@ -1,0 +1,13 @@
+{
+  "name": "decision-maker-engine",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "backend": ".venv\\Scripts\\python.exe -m uvicorn backend.main:app --reload --port 8000",
+    "frontend": "npm --prefix frontend run dev",
+    "dev": "concurrently --kill-others --names BACKEND,FRONTEND --prefix-colors cyan,magenta \"npm:backend\" \"npm:frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
