@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import re
 
@@ -9,17 +9,80 @@ from .schemas import GeminiBatch
 
 load_dotenv()
 
-SYSTEM_PROMPT = """You extract independent matching signals for LinkedIn search results.
-Return only JSON matching the requested schema. Never score, rank, recommend, keep, or reject anyone.
+SYSTEM_PROMPT = """You are an information extraction engine.
 
-Definitions:
-- company_match: "exact" if the target company name (or an unambiguous variant/abbreviation) appears clearly associated with the person's current or past role in the snippet/title; "partial" for weak/ambiguous association such as one mention without clear role linkage; "absent" if it does not appear.
-- role_match: "exact" if the person holds the target search_role or a title containing it; "related" for a clearly adjacent operational/leadership title; "absent" if nothing operational/relevant appears.
-- location_match: best evidence relative to search_location (a US state): "city" for a specific city in that state, "metro" for a named metro within/near it, "state" for just the state, "country_only" for only United States, or "absent".
-- employment_status: "current" for a present role at the target company (Present, no end date, or current phrasing); "former" for a clear end date or past framing; "unclear" otherwise.
-- name_company_collision: true only if the person's name shares a word with the target company and there is no other positive company-association evidence; false otherwise.
+Your job is ONLY to extract factual information from LinkedIn search result titles and snippets.
 
-Treat every array item independently. Echo its url exactly. Do not infer one item's context from another."""
+You MUST NOT:
+
+* score candidates
+* rank candidates
+* decide whether someone is a match
+* decide whether a role is related
+* decide whether a company matches
+* decide whether a location matches
+
+Only extract facts explicitly supported by the text.
+
+Return JSON only.
+
+For each input item return:
+
+{
+"url": "...",
+"person_name": "...",
+"companies_found": [],
+"titles_found": [],
+"locations_found": [],
+"employment_indicators": [],
+"raw_employment_status": "current | former | unclear"
+}
+
+Rules:
+
+person_name:
+
+* Extract the person's name if visible.
+* Otherwise return "".
+
+companies_found:
+
+* List every company name explicitly mentioned.
+* Do not normalize names.
+* Preserve wording from the snippet.
+
+titles_found:
+
+* List every job title explicitly mentioned.
+* Preserve wording.
+
+locations_found:
+
+* List every location explicitly mentioned.
+* Preserve wording.
+
+employment_indicators:
+
+* Extract phrases that indicate employment timing.
+* Examples:
+
+  * "Present"
+  * "Current"
+  * "Apr 2025 - Present"
+  * "2019 - 2024"
+  * "Former"
+
+raw_employment_status:
+
+* "current" if the text clearly indicates a present role.
+* "former" if the text clearly indicates a past role.
+* "unclear" otherwise.
+
+Treat every item independently.
+
+Echo the url exactly.
+
+Return only valid JSON matching the schema."""
 
 
 def _strip_fences(text):
@@ -61,5 +124,4 @@ class GeminiExtractor:
         )
         if not response.text:
             raise ValueError("Gemini returned an empty response")
-        print("Gemini result:", response.text, flush=True)
         return GeminiBatch.model_validate_json(_strip_fences(response.text)).results

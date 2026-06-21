@@ -52,40 +52,29 @@ def final_csv(db, forced=False):
             if not winners and ranked:
                 winners = ranked[:1]
                 forced_low_confidence_ids.add(ranked[0].id)
-        row = {
-            "company_name": company.display_name,
-            "rounds_taken": company.rounds_completed,
-            "final_status": company.status,
-        }
+
+        final_status = company.status
         if forced and company.status == "needs_next_round":
-            row["final_status"] = "needs_next_round (forced-finalized early)"
-        for index in (1, 2):
-            candidate = winners[index - 1] if len(winners) >= index else None
-            prefix = f"decision_maker_{index}"
-            row[f"{prefix}_name"] = _name(candidate.raw_title) if candidate else ""
-            row[f"{prefix}_role_title"] = candidate.raw_title if candidate else ""
-            row[f"{prefix}_linkedin_url"] = candidate.raw_url if candidate else ""
-            row[f"{prefix}_investment_score"] = candidate.investment_score if candidate else ""
-            row[f"{prefix}_evidence"] = _excerpt(candidate.raw_snippet) if candidate else ""
-            row[f"{prefix}_low_confidence"] = (
-                "yes"
-                if candidate and (candidate.is_low_confidence or candidate.id in forced_low_confidence_ids)
-                else ""
-            )
-        rows.append(row)
-    fields = ["company_name"]
-    for index in (1, 2):
-        fields.extend(
-            [
-                f"decision_maker_{index}_name",
-                f"decision_maker_{index}_role_title",
-                f"decision_maker_{index}_linkedin_url",
-                f"decision_maker_{index}_investment_score",
-                f"decision_maker_{index}_evidence",
-                f"decision_maker_{index}_low_confidence",
-            ]
-        )
-    fields.extend(["rounds_taken", "final_status"])
+            final_status = "needs_next_round (forced-finalized early)"
+
+        if not winners:
+            # Still emit one placeholder row so the company appears in the output
+            rows.append({
+                "company_name": company.display_name,
+                "person_name": "",
+                "role_title": "",
+                "linkedin_url": "",
+            })
+        else:
+            for candidate in winners:
+                rows.append({
+                    "company_name": company.display_name,
+                    "person_name": _name(candidate.raw_title),
+                    "role_title": candidate.raw_title,
+                    "linkedin_url": candidate.raw_url,
+                })
+
+    fields = ["company_name", "person_name", "role_title", "linkedin_url"]
     return _csv_response(rows, fields)
 
 
@@ -101,6 +90,12 @@ def audit_csv(db):
         "raw_title",
         "raw_snippet",
         "url",
+        "gemini_person_name",
+        "gemini_companies_found",
+        "gemini_titles_found",
+        "gemini_locations_found",
+        "gemini_employment_indicators",
+        "gemini_raw_employment_status",
         "gemini_company_match",
         "gemini_role_match",
         "gemini_location_match",
@@ -116,7 +111,7 @@ def audit_csv(db):
     candidates = db.scalars(
         select(Candidate)
         .join(Candidate.company)
-        .options(selectinload(Candidate.company))
+        .options(selectinload(Candidate.company), selectinload(Candidate.observations))
         .order_by(
             Company.display_name.asc(),
             Candidate.investment_score.desc().nulls_last(),
@@ -136,6 +131,12 @@ def audit_csv(db):
                 "raw_title": candidate.raw_title,
                 "raw_snippet": candidate.raw_snippet,
                 "url": candidate.raw_url,
+                "gemini_person_name": _join_facts(candidate.observations, "person_name"),
+                "gemini_companies_found": _join_facts(candidate.observations, "companies_found"),
+                "gemini_titles_found": _join_facts(candidate.observations, "titles_found"),
+                "gemini_locations_found": _join_facts(candidate.observations, "locations_found"),
+                "gemini_employment_indicators": _join_facts(candidate.observations, "employment_indicators"),
+                "gemini_raw_employment_status": _join_facts(candidate.observations, "raw_employment_status"),
                 "gemini_company_match": candidate.gemini_company_match or "",
                 "gemini_role_match": candidate.gemini_role_match or "",
                 "gemini_location_match": candidate.gemini_location_match or "",
@@ -155,7 +156,7 @@ def _name(title):
 
 
 def _excerpt(snippet, length=240):
-    return snippet if len(snippet) <= length else snippet[: length - 1].rstrip() + "â€¦"
+    return snippet if len(snippet) <= length else snippet[: length - 1].rstrip() + "…"
 
 
 def _bool(value):
@@ -166,3 +167,14 @@ def _bool(value):
 
 def _number(value):
     return "" if value is None else value
+
+def _join_facts(observations, attr):
+    values = []
+    for observation in observations:
+        value = getattr(observation, attr, None)
+        if isinstance(value, list):
+            values.extend(str(item) for item in value if item)
+        elif value:
+            values.append(str(value))
+    deduped = list(dict.fromkeys(values))
+    return " | ".join(deduped)

@@ -1,4 +1,4 @@
-from typing import Literal
+﻿from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
@@ -6,13 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 class UploadRecord(BaseModel):
     search_company: str = Field(min_length=1)
     search_role: str = Field(min_length=1)
-    search_location: str = Field(min_length=1)
+    search_location: str = ""
     position: int = Field(ge=1)
     title: str
     snippet: str
     url: HttpUrl
 
-    @field_validator("search_company", "search_role", "search_location")
+    @field_validator("search_company", "search_role")
     @classmethod
     def strip_required(cls, value):
         value = " ".join(value.split())
@@ -20,14 +20,32 @@ class UploadRecord(BaseModel):
             raise ValueError("must not be blank")
         return value
 
+    @field_validator("search_location", mode="before")
+    @classmethod
+    def normalize_location(cls, value):
+        # Round 3+ searches (General Manager, Director of Operations) are
+        # location-agnostic, so the scraper may send null or omit this field
+        # entirely. A "before" validator intercepts the raw value ahead of
+        # str type-checking, so None no longer crashes the whole upload --
+        # it's just treated as "no location". classify_location() already
+        # treats a blank target as "absent", which is the correct, harmless
+        # outcome for those rounds. This doesn't relax round 1/2 uploads in
+        # any way that matters in practice: a real boss scrape for those
+        # rounds still sends a real location string, which passes through
+        # unchanged.
+        if value is None:
+            return ""
+        return " ".join(str(value).split())
+
 
 class GeminiItem(BaseModel):
     url: str
-    company_match: Literal["exact", "partial", "absent"]
-    role_match: Literal["exact", "related", "absent"]
-    location_match: Literal["city", "metro", "state", "country_only", "absent"]
-    employment_status: Literal["current", "former", "unclear"]
-    name_company_collision: bool
+    person_name: str = ""
+    companies_found: list[str] = Field(default_factory=list)
+    titles_found: list[str] = Field(default_factory=list)
+    locations_found: list[str] = Field(default_factory=list)
+    employment_indicators: list[str] = Field(default_factory=list)
+    raw_employment_status: Literal["current", "former", "unclear"] = "unclear"
 
 
 class GeminiBatch(BaseModel):
@@ -48,4 +66,3 @@ class CompanyOut(BaseModel):
     roles_tried: list[str]
     next_role: str | None
     winners: list[dict]
-

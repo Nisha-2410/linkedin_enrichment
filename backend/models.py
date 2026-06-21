@@ -54,6 +54,7 @@ class Candidate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     company: Mapped[Company] = relationship(back_populates="candidates")
+    observations: Mapped[list["Observation"]] = relationship(back_populates="candidate")
 
 
 class Job(Base):
@@ -83,6 +84,12 @@ class Observation(Base):
     search_location: Mapped[str] = mapped_column(String)
     position: Mapped[int] = mapped_column(Integer)
     round_number: Mapped[int] = mapped_column(Integer)
+    person_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    companies_found: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    titles_found: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    locations_found: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    employment_indicators: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    raw_employment_status: Mapped[str | None] = mapped_column(String, nullable=True)
     company_match: Mapped[str | None] = mapped_column(String, nullable=True)
     role_match: Mapped[str | None] = mapped_column(String, nullable=True)
     location_match: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -91,4 +98,5 @@ class Observation(Base):
     processing_status: Mapped[str] = mapped_column(String, default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     company: Mapped[Company] = relationship()
+    candidate: Mapped[Candidate] = relationship(back_populates="observations")
 

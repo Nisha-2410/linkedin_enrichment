@@ -26,3 +26,19 @@ SIGNAL_VALUES = {
 }
 RETRIEVAL_WEIGHTS = {"company_match": 0.5, "role_match": 0.35, "location_match": 0.15}
 
+# Rounds 3+ search senior, company-wide roles (General Manager, Director of
+# Operations) where location is not a meaningful signal -- those roles aren't
+# tied to one office. From this round onward, location_match is dropped from
+# the retrieval formula entirely (not just down-weighted), and its 0.15
+# weight is redistributed proportionally onto company_match/role_match so the
+# weights still sum to 1.0. The investment-score location penalty (-15 for
+# location_match == "absent") is skipped for the same rounds, since punishing
+# "absent" while also excluding location from the positive weight would
+# silently undo the point of this rule.
+LOCATION_AGNOSTIC_MIN_ROUND = 3
+
+_LOCATION_AGNOSTIC_BASE = RETRIEVAL_WEIGHTS["company_match"] + RETRIEVAL_WEIGHTS["role_match"]
+LOCATION_AGNOSTIC_WEIGHTS = {
+    "company_match": RETRIEVAL_WEIGHTS["company_match"] / _LOCATION_AGNOSTIC_BASE,
+    "role_match": RETRIEVAL_WEIGHTS["role_match"] / _LOCATION_AGNOSTIC_BASE,
+}

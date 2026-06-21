@@ -19,10 +19,19 @@ class FakeDb:
         return ScalarResult(self.rows)
 
 
-def test_audit_csv_includes_all_requested_columns_and_raw_signals():
+def test_audit_csv_includes_requested_columns_raw_facts_and_computed_signals():
     company = SimpleNamespace(display_name="Acme", status="needs_next_round")
+    observation = SimpleNamespace(
+        person_name="Jane Doe",
+        companies_found=["Acme"],
+        titles_found=["CFO"],
+        locations_found=["Austin, TX"],
+        employment_indicators=["Present"],
+        raw_employment_status="current",
+    )
     candidate = SimpleNamespace(
         company=company,
+        observations=[observation],
         display_name="Jane Doe",
         round_number=2,
         search_role="CFO",
@@ -47,10 +56,12 @@ def test_audit_csv_includes_all_requested_columns_and_raw_signals():
 
     assert lines[0] == (
         "company_name,company_status,round_number,search_role,search_location,"
-        "candidate_name,raw_title,raw_snippet,url,gemini_company_match,gemini_role_match,"
-        "gemini_location_match,gemini_employment_status,gemini_name_collision,retrieval_score,"
-        "investment_score,times_seen,processing_status,is_winner,rejection_reason"
+        "candidate_name,raw_title,raw_snippet,url,gemini_person_name,gemini_companies_found,"
+        "gemini_titles_found,gemini_locations_found,gemini_employment_indicators,gemini_raw_employment_status,gemini_company_match,"
+        "gemini_role_match,gemini_location_match,gemini_employment_status,gemini_name_collision,"
+        "retrieval_score,investment_score,times_seen,processing_status,is_winner,rejection_reason"
     )
     assert "Acme,needs_next_round,2,CFO," in lines[1]
     assert "Jane Doe - CFO at Acme" in lines[1]
+    assert ",Jane Doe,Acme,CFO," in lines[1]
     assert ",exact,related,metro,current,false,85,90,3,scored,true," in lines[1]

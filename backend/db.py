@@ -36,9 +36,20 @@ def _migrate_sqlite():
     if "candidates" not in inspector.get_table_names():
         return
     columns = {column["name"] for column in inspector.get_columns("candidates")}
+    observation_columns = {column["name"] for column in inspector.get_columns("observations")}
     with engine.begin() as connection:
         if "display_name" not in columns:
             connection.execute(text("ALTER TABLE candidates ADD COLUMN display_name VARCHAR DEFAULT ''"))
+        for column_name, ddl in {
+            "person_name": "VARCHAR",
+            "companies_found": "JSON",
+            "titles_found": "JSON",
+            "locations_found": "JSON",
+            "employment_indicators": "JSON",
+            "raw_employment_status": "VARCHAR",
+        }.items():
+            if column_name not in observation_columns:
+                connection.execute(text(f"ALTER TABLE observations ADD COLUMN {column_name} {ddl}"))
         connection.execute(
             text(
                 """

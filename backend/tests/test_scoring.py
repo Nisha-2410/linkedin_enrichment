@@ -1,4 +1,4 @@
-from backend.scoring import calculate_investment_score, calculate_retrieval_score, score_candidate
+﻿from backend.scoring import calculate_investment_score, calculate_retrieval_score, score_candidate
 
 
 def test_natasha_high_confidence_fixture():
@@ -27,9 +27,9 @@ def test_formula_and_absent_location_penalty():
     assert calculate_investment_score(retrieval, "absent", 1) == 45
 
 
-def test_corroboration_bonus_caps_at_fifteen():
-    assert calculate_investment_score(80, "state", 2) == 85
-    assert calculate_investment_score(80, "state", 20) == 95
+def test_corroboration_bonus_caps_at_five():
+    assert calculate_investment_score(80, "state", 2) == 82.5
+    assert calculate_investment_score(80, "state", 20) == 85
 
 
 def test_collision_hard_override():

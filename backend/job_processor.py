@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import logging
 import re
 import time
@@ -9,8 +9,9 @@ from sqlalchemy.orm import joinedload
 
 from .config import GEMINI_BATCH_SIZE, GEMINI_MAX_ATTEMPTS, GEMINI_RPM
 from .db import SessionLocal
+from .fact_classifier import classify_observation
 from .gemini_client import GeminiExtractor
-from .models import Job, Observation
+from .models import Candidate, Job, Observation
 from .services import aggregate_candidate, normalize_url, update_company_decision
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ rate_limiter = FixedIntervalRateLimiter(GEMINI_RPM)
 # 429 helpers
 # ---------------------------------------------------------------------------
 def _is_daily_quota_exhausted(exc) -> bool:
-    """True when the daily free-tier cap is hit — no retry will help today."""
+    """True when the daily free-tier cap is hit â€” no retry will help today."""
     return "GenerateRequestsPerDayPerProjectPerModel" in str(exc)
 
 
@@ -74,7 +75,7 @@ async def _call_with_retries(extractor, observations):
             error = exc
             logger.warning("Gemini attempt %s failed: %s", attempt + 1, exc)
 
-            # Daily cap — retrying is pointless, surface the error immediately.
+            # Daily cap â€” retrying is pointless, surface the error immediately.
             if _is_daily_quota_exhausted(exc):
                 logger.error(
                     "Gemini daily quota exhausted. "
@@ -156,11 +157,21 @@ def _persist_batch(job_id, batch, results=None, failures=None, failure=None):
                 job.failed_candidates += 1
             else:
                 result = results[observation.id]
-                observation.company_match = result.company_match
-                observation.role_match = result.role_match
-                observation.location_match = result.location_match
-                observation.employment_status = result.employment_status
-                observation.name_collision = result.name_company_collision
+                computed = classify_observation(observation, result)
+                observation.person_name = computed["person_name"]
+                observation.companies_found = computed["companies_found"]
+                observation.titles_found = computed["titles_found"]
+                observation.locations_found = computed["locations_found"]
+                observation.employment_indicators = computed["employment_indicators"]
+                observation.raw_employment_status = computed["raw_employment_status"]
+                observation.company_match = computed["company_match"]
+                observation.role_match = computed["role_match"]
+                observation.location_match = computed["location_match"]
+                observation.employment_status = computed["employment_status"]
+                observation.name_collision = computed["name_collision"]
+                if observation.person_name and observation.person_name.strip():
+                    candidate = db.get(Candidate, observation.candidate_id)
+                    candidate.display_name = observation.person_name.strip()
                 observation.processing_status = "extracted"
             job.processed_candidates += 1
             aggregate_candidate(db, observation.candidate_id)

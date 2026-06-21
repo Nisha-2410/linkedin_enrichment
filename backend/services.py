@@ -4,7 +4,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import delete, select
 
-from .config import BASE_DIR
+from .config import BASE_DIR, LOCATION_AGNOSTIC_MIN_ROUND
 from .models import Candidate, Company, Job, Observation
 from .scoring import score_candidate
 from .stopping_logic import decide_company
@@ -61,8 +61,25 @@ def aggregate_candidate(db, candidate_id):
     candidate.gemini_role_match = best("role_match", "role").role_match
     candidate.gemini_location_match = best("location_match", "location").location_match
     candidate.gemini_employment_status = best("employment_status", "employment").employment_status
-    candidate.gemini_name_collision = all(o.name_collision for o in observations)
+    # all() over a list of Nones returns True, which would incorrectly zero
+    # a valid candidate's score. Only flag a collision when every observation
+    # has an *explicit* True -- None/False observations are not collisions.
+    candidate.gemini_name_collision = bool(observations) and all(
+        o.name_collision is True for o in observations
+    )
     candidate.times_seen = len(observations)
+
+    # candidate.round_number is the round this person was FIRST found in --
+    # not which round(s) actually produced their evidence. A person first
+    # found in round 1 (Operations Manager search, location relevant) can
+    # reappear in round 3 (Director of Operations, location-agnostic), so the
+    # location-agnostic decision must look at every contributing observation,
+    # not just the candidate row. Location only drops out of the formula once
+    # NONE of the evidence came from a location-relevant round (1-2) -- if a
+    # location-relevant search ever ran for this person and still came back
+    # "absent", that's real signal and should still count.
+    location_agnostic = all(o.round_number >= LOCATION_AGNOSTIC_MIN_ROUND for o in observations)
+
     result = score_candidate(
         candidate.gemini_company_match,
         candidate.gemini_role_match,
@@ -70,6 +87,7 @@ def aggregate_candidate(db, candidate_id):
         candidate.gemini_employment_status,
         candidate.gemini_name_collision,
         candidate.times_seen,
+        location_agnostic=location_agnostic,
     )
     candidate.retrieval_score = result.retrieval_score
     candidate.investment_score = result.investment_score
