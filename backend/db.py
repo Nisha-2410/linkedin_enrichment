@@ -24,6 +24,7 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 def init_db():
     from . import models  # noqa: F401
+    from . import india_models  # noqa: F401  -- registers India tables with Base
 
     Base.metadata.create_all(engine)
     _migrate_sqlite()

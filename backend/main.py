@@ -5,7 +5,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import TypeAdapter, ValidationError
@@ -33,6 +33,14 @@ from .services import (
     normalize_url,
     update_company_decision,
     wipe_all_data,
+)
+from .india_phone import (
+    _cache_clear as india_cache_clear,
+    apply_india_opportunity_records,
+    apply_indiamart_phones,
+    apply_serper_phones,
+    india_companies_without_phone,
+    india_phone_csv,
 )
 
 
@@ -119,6 +127,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception(request: Request, exc: Exception):
+    """Return a JSON 500 with CORS headers attached.
+
+    Starlette's CORSMiddleware only wraps successful responses -- if an
+    unhandled exception bubbles past it the browser receives a bare error
+    with no Access-Control-Allow-Origin header and misreports the crash as
+    a CORS block, hiding the real traceback.  This handler catches those
+    cases and re-attaches the header so the actual error message reaches
+    the frontend console instead of a misleading CORS message.
+    """
+    import traceback, logging
+    logging.exception("Unhandled server error")
+    origin = request.headers.get("origin", "")
+    allowed = {"http://localhost:5173", "http://127.0.0.1:5173"}
+    headers = {"Access-Control-Allow-Origin": origin if origin in allowed else ""}
+    return Response(
+        content=f'{{"detail": "{exc}"}}',
+        status_code=500,
+        media_type="application/json",
+        headers=headers,
+    )
 
 
 @app.get("/api/health")
@@ -465,4 +497,160 @@ async def export_merged(file: UploadFile = File(...), db: Session = Depends(get_
         merged_csv(db, records),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="merged-operational.csv"'},
+    )
+
+# ===========================================================================
+# India pipeline routes
+# ===========================================================================
+
+@app.post("/api/india/uploads/opportunities")
+async def india_upload_opportunities(file: UploadFile = File(...)):
+    """Upload the India opportunity-scoring CSV (same column format as the
+    main opportunity CSV: Company Name, Company Opportunity Score, City,
+    State, Supplier Type, Job Role, AI Insight, Contact Details).
+    Populates IndiaOpportunityCompany; never touches the main Company table."""
+    records = _parse_csv_rows(await file.read(), OpportunityRecord, "India opportunity-scoring")
+    with SessionLocal.begin() as db:
+        result = apply_india_opportunity_records(db, records)
+    return {
+        "created_count": len(result["created"]),
+        "updated_count": len(result["updated"]),
+        "created_company_names": result["created"],
+    }
+
+
+@app.post("/api/india/uploads/indiamart-phones")
+async def india_upload_indiamart(file: UploadFile = File(...)):
+    """Upload the IndiaMart JSON the boss scraped.
+
+    Accepts a JSON array; each element must have at minimum:
+      - company_name (or name / Company Name)
+      - phone (or phone_number / mobile / contact / Mobile)
+
+    IndiaMart is always India so a bare 10-digit number is accepted without
+    a country field. Companies that already have a phone are skipped.
+    Returns counts + lists of unmatched / phone-rejected companies."""
+    raw = await file.read()
+    try:
+        data = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(422, f"Invalid JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise HTTPException(422, "The JSON root must be an array of IndiaMart records.")
+    with SessionLocal.begin() as db:
+        result = apply_indiamart_phones(db, data)
+    return {
+        "total_records": result["total_records"],
+        "skipped_empty_count": result["skipped_empty"],
+        "matched_count": len(result["matched"]),
+        "fuzzy_match_count": len(result["fuzzy_matches"]),
+        "already_filled_count": len(result["already_filled"]),
+        "rejected_phone_count": len(result["rejected_phone"]),
+        "unmatched_count": len(result["unmatched"]),
+        "matched_companies": result["matched"],
+        "fuzzy_matches": result["fuzzy_matches"],
+        "rejected_phone_details": result["rejected_phone"],
+        "unmatched_companies": result["unmatched"],
+    }
+
+
+@app.get("/api/india/exports/still-needed-phones.csv")
+def india_still_needed_phones(db: Session = Depends(get_db)):
+    """Download a CSV of India companies that still have no phone number.
+    The boss uses this list to run a Serper search for the missing ones."""
+    import csv, io
+    rows = india_companies_without_phone(db)
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=["company_name"])
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        stream.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="india-still-needed-phones.csv"'},
+    )
+
+
+@app.post("/api/india/uploads/serper-phones")
+async def india_upload_serper(file: UploadFile = File(...)):
+    """Upload the Serper JSON the boss scraped for companies IndiaMart missed.
+
+    Accepts a JSON array; each element must have at minimum:
+      - company_name (or name / Company Name)
+      - phone (or phone_number / mobile / contact / Mobile)
+      - country (optional; bare 10-digit numbers require 'India' here)
+
+    Companies that already have a phone from IndiaMart are skipped.
+    Returns counts + lists of unmatched / phone-rejected companies."""
+    raw = await file.read()
+    try:
+        data = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(422, f"Invalid JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise HTTPException(422, "The JSON root must be an array of Serper records.")
+    with SessionLocal.begin() as db:
+        result = apply_serper_phones(db, data)
+    return {
+        "total_records": result["total_records"],
+        "skipped_empty_count": result["skipped_empty"],
+        "matched_count": len(result["matched"]),
+        "fuzzy_match_count": len(result["fuzzy_matches"]),
+        "already_filled_count": len(result["already_filled"]),
+        "rejected_phone_count": len(result["rejected_phone"]),
+        "rejected_country_count": len(result["rejected_country"]),
+        "unmatched_count": len(result["unmatched"]),
+        "matched_companies": result["matched"],
+        "fuzzy_matches": result["fuzzy_matches"],
+        "rejected_phone_details": result["rejected_phone"],
+        "rejected_country_details": result["rejected_country"],
+        "unmatched_companies": result["unmatched"],
+    }
+
+
+@app.delete("/api/india/wipe")
+def india_wipe(confirm: str = "", db: Session = Depends(get_db)):
+    """Wipe all India pipeline data (IndiaOpportunityCompany + IndiaPhoneNumber).
+    Requires ?confirm=DELETE to avoid accidental wipes. No undo."""
+    if confirm != "DELETE":
+        raise HTTPException(400, "Pass ?confirm=DELETE to confirm the wipe.")
+    from .india_models import IndiaOpportunityCompany, IndiaPhoneNumber
+    db.query(IndiaPhoneNumber).delete()
+    db.query(IndiaOpportunityCompany).delete()
+    db.commit()
+    india_cache_clear()
+    return {"wiped": True}
+
+
+@app.get("/api/india/stats")
+def india_stats(db: Session = Depends(get_db)):
+    """Return live counts for the India pipeline hero stats."""
+    from .india_models import IndiaOpportunityCompany, IndiaPhoneNumber
+    total_companies = db.scalar(select(func.count()).select_from(IndiaOpportunityCompany)) or 0
+    indiamart_phones = db.scalar(
+        select(func.count()).select_from(IndiaPhoneNumber).where(IndiaPhoneNumber.source == "indiamart")
+    ) or 0
+    serper_phones = db.scalar(
+        select(func.count()).select_from(IndiaPhoneNumber).where(IndiaPhoneNumber.source == "serper")
+    ) or 0
+    return {
+        "total_companies": total_companies,
+        "indiamart_phones": indiamart_phones,
+        "serper_phones": serper_phones,
+    }
+
+
+@app.get("/api/india/exports/india-pipeline.csv")
+def india_export_pipeline(db: Session = Depends(get_db)):
+    """Download the final India pipeline CSV.
+
+    Columns: company_name, company_score, job_title, supplier_type, city,
+    state, phone_number (+91 prefixed), contact_details, ai_insight, urgency.
+
+    urgency is 'High' when company_score >= 80, else 'Normal'.
+    phone_number is blank for companies that have no verified Indian number yet."""
+    return Response(
+        india_phone_csv(db),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="india-pipeline.csv"'},
     )

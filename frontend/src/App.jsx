@@ -1,10 +1,10 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, Building2, Check, ChevronDown, FileJson, FileSpreadsheet, Globe, LayoutGrid, Search, Sparkles, Trash2, UploadCloud, Users, UsersRound, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, ArrowDownToLine, Building2, Check, ChevronDown, FileJson, FileSpreadsheet, Globe, LayoutGrid, MapPin, Phone, Search, Sparkles, Trash2, UploadCloud, Users, UsersRound, X } from 'lucide-react'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 const LABELS = {
-  resolved_90: 'Resolved Â· 90+',
-  resolved_85_fallback: 'Resolved Â· fallback',
+  resolved_90: 'Resolved · 90+',
+  resolved_85_fallback: 'Resolved · fallback',
   needs_next_round: 'Needs next round',
   exhausted: 'Exhausted',
 }
@@ -46,6 +46,40 @@ function ConfirmDialog({ action, busy, onCancel, onConfirm }) {
   </div>
 }
 
+// ─── India tab result banner ───────────────────────────────────────────────
+function IndiaResultBanner({ result, label }) {
+  if (!result) return null
+  const matchedCount = result.matched_count ?? result.matched?.length ?? 0
+  const fuzzyCount = result.fuzzy_match_count ?? result.fuzzy_matches?.length ?? 0
+  const alreadyFilledCount = result.already_filled_count ?? result.already_filled?.length ?? 0
+  const rejectedPhoneCount = result.rejected_phone_count ?? result.rejected_phone?.length ?? 0
+  const rejectedCountryCount = result.rejected_country_count ?? result.rejected_country?.length ?? 0
+  const unmatchedCount = result.unmatched_count ?? result.unmatched?.length ?? 0
+  const fuzzyList = result.fuzzy_matches ?? []
+  const rejectedCountryList = result.rejected_country_details ?? result.rejected_country ?? []
+  const totalRecords = result.total_records
+  const skippedEmpty = result.skipped_empty_count
+
+  return <div className="india-result">
+    {totalRecords !== undefined && <div className="india-result-row india-result-total">
+      <span>Records in file</span><strong>{totalRecords}</strong>
+    </div>}
+    {result.created_count !== undefined && <div className="india-result-row"><span>New companies</span><strong>{result.created_count}</strong></div>}
+    {result.updated_count !== undefined && <div className="india-result-row"><span>Updated companies</span><strong>{result.updated_count}</strong></div>}
+    {totalRecords !== undefined && <div className="india-result-row india-result-done"><span>Matched (phone saved)</span><strong>{matchedCount}</strong></div>}
+    {fuzzyCount > 0 && <div className="india-result-row india-result-fuzzy"><span>Fuzzy matched (check these)</span><strong>{fuzzyCount}</strong></div>}
+    {totalRecords !== undefined && <div className="india-result-row"><span>Already had phone</span><strong>{alreadyFilledCount}</strong></div>}
+    {totalRecords !== undefined && <div className="india-result-row"><span>Invalid / no phone</span><strong>{rejectedPhoneCount}</strong></div>}
+    {rejectedCountryCount > 0 && <div className="india-result-row"><span>Non-India results</span><strong>{rejectedCountryCount}</strong></div>}
+    {totalRecords !== undefined && <div className="india-result-row india-result-left"><span>No company match — still left</span><strong>{unmatchedCount}</strong></div>}
+    {skippedEmpty > 0 && <div className="india-result-row india-result-warning-row"><span>Skipped (no company name found)</span><strong>{skippedEmpty}</strong></div>}
+    {fuzzyList.length > 0 && <div className="india-result-fuzzy-list">
+      {fuzzyList.map((f, i) => <p key={i}><span className="fuzzy-scraped">{f.scraped_name}</span><span className="fuzzy-arrow">→</span><span className="fuzzy-matched">{f.matched_to}</span></p>)}
+    </div>}
+    {rejectedCountryList.length > 0 && <p className="india-result-warning">Non-India: {rejectedCountryList.map(r => r.company).join(', ')}</p>}
+  </div>
+}
+
 function App() {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
@@ -70,11 +104,26 @@ function App() {
   const [opportunityResult, setOpportunityResult] = useState(null)
   const [peopleFile, setPeopleFile] = useState(null)
   const [mergeBusy, setMergeBusy] = useState(false)
+
+  // ── India tab state ──────────────────────────────────────────────────────
+  const [indiaStats, setIndiaStats] = useState(null)
+  const [indiaRefreshBusy, setIndiaRefreshBusy] = useState(false)
+  const [indiaOppBusy, setIndiaOppBusy] = useState(false)
+  const [indiaOppResult, setIndiaOppResult] = useState(null)
+  const [indiaOppFile, setIndiaOppFile] = useState(null)
+  const [indiaMartBusy, setIndiaMartBusy] = useState(false)
+  const [indiaMartResult, setIndiaMartResult] = useState(false)
+  const [serperBusy, setSerperBusy] = useState(false)
+  const [serperResult, setSerperResult] = useState(null)
+
   const inputRef = useRef(null)
   const domainInputRef = useRef(null)
   const supplierTypesInputRef = useRef(null)
   const opportunityInputRef = useRef(null)
   const peopleInputRef = useRef(null)
+  const indiaOppInputRef = useRef(null)
+  const indiaMartInputRef = useRef(null)
+  const serperInputRef = useRef(null)
 
   const refreshCompanies = async () => {
     try {
@@ -181,6 +230,78 @@ function App() {
     finally { setMergeBusy(false) }
   }
 
+  // ── India handlers ───────────────────────────────────────────────────────
+  const uploadIndiaOpportunities = async (selected) => {
+    if (!selected) return
+    setIndiaOppFile(selected); setIndiaOppBusy(true); setError(''); setIndiaOppResult(null)
+    const body = new FormData(); body.append('file', selected)
+    try {
+      const result = await api('/india/uploads/opportunities', { method: 'POST', body })
+      setIndiaOppResult(result)
+      await refreshIndiaStats()
+    } catch (err) { setError(err.message); setIndiaOppFile(null) }
+    finally { setIndiaOppBusy(false) }
+  }
+
+  const uploadIndiaMart = async (selected) => {
+    if (!selected) return
+    setIndiaMartBusy(true); setError(''); setIndiaMartResult(null)
+    const body = new FormData(); body.append('file', selected)
+    try {
+      const result = await api('/india/uploads/indiamart-phones', { method: 'POST', body })
+      setIndiaMartResult(result)
+      await refreshIndiaStats()
+    } catch (err) { setError(err.message) }
+    finally { setIndiaMartBusy(false) }
+  }
+
+  const uploadSerper = async (selected) => {
+    if (!selected) return
+    setSerperBusy(true); setError(''); setSerperResult(null)
+    const body = new FormData(); body.append('file', selected)
+    try {
+      const result = await api('/india/uploads/serper-phones', { method: 'POST', body })
+      setSerperResult(result)
+      await refreshIndiaStats()
+    } catch (err) { setError(err.message) }
+    finally { setSerperBusy(false) }
+  }
+
+  const refreshIndiaStats = async () => {
+    setIndiaRefreshBusy(true)
+    try {
+      const stats = await api('/india/stats')
+      setIndiaStats(stats)
+    } catch (err) { setError(err.message) }
+    finally { setIndiaRefreshBusy(false) }
+  }
+
+  const downloadIndiaStillNeeded = async () => {
+    try {
+      const response = await fetch(`${API}/india/exports/still-needed-phones.csv?_=${Date.now()}`)
+      if (!response.ok) throw new Error('Download failed')
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url; link.download = 'india-still-needed-phones.csv'
+      document.body.appendChild(link); link.click(); link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) { setError(err.message) }
+  }
+
+  const downloadIndiaPipeline = async () => {
+    try {
+      const response = await fetch(`${API}/india/exports/india-pipeline.csv?_=${Date.now()}`)
+      if (!response.ok) throw new Error('Download failed')
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url; link.download = 'india-pipeline.csv'
+      document.body.appendChild(link); link.click(); link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) { setError(err.message) }
+  }
+
   const rerunPendingBatch = async () => {
     setBusy(true); setError('')
     try {
@@ -225,6 +346,14 @@ function App() {
     requireTyped: true,
   })
 
+  const askWipeIndia = () => setConfirmAction({
+    type: 'wipe-india',
+    title: 'Reset India pipeline?',
+    message: 'This permanently deletes all India companies and every phone number collected so far. You will need to re-upload the opportunity CSV and re-run the phone enrichment steps.',
+    confirmLabel: 'Reset India pipeline',
+    requireTyped: true,
+  })
+
   const runConfirmedDelete = async () => {
     if (!confirmAction) return
     setBusy(true); setError('')
@@ -234,6 +363,11 @@ function App() {
       if (confirmAction.type === 'wipe-all') {
         await api('/admin/wipe-all?confirm=DELETE', { method: 'DELETE' })
         setJob(null); setFile(null); setPreview(null)
+      }
+      if (confirmAction.type === 'wipe-india') {
+        await api('/india/wipe?confirm=DELETE', { method: 'DELETE' })
+        setIndiaOppResult(null); setIndiaMartResult(null); setSerperResult(null)
+        setIndiaStats({ total_companies: 0, indiamart_phones: 0, serper_phones: 0 })
       }
       await refreshCompanies()
       setConfirmAction(null)
@@ -258,8 +392,9 @@ function App() {
       <div className="tab-bar">
         <button className={activeTab === 'pipeline' ? 'active' : ''} onClick={() => setActiveTab('pipeline')}><LayoutGrid size={15}/>Pipeline</button>
         <button className={activeTab === 'merge' ? 'active' : ''} onClick={() => setActiveTab('merge')}><UsersRound size={15}/>Merge & Export</button>
+        <button className={activeTab === 'india' ? 'active' : ''} onClick={() => setActiveTab('india')}><MapPin size={15}/>India Pipeline</button>
       </div>
-      <div className="header-actions"><div className="system"><i /> Local workspace Â· persistent</div><button className="reset-btn" onClick={askWipeAll}><Trash2 size={15}/>Reset workspace</button></div>
+      <div className="header-actions"><div className="system"><i /> Local workspace · persistent</div><button className="reset-btn" onClick={askWipeAll}><Trash2 size={15}/>Reset workspace</button></div>
     </header>
 
     {activeTab === 'pipeline' && <main>
@@ -280,12 +415,12 @@ function App() {
           {!preview ? <div className={`dropzone ${busy ? 'busy' : ''}`} onClick={() => !busy && inputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); chooseFile(e.dataTransfer.files[0]) }}>
             <input ref={inputRef} type="file" accept=".json,application/json" hidden onChange={e => chooseFile(e.target.files[0])}/>
             <span className="upload-orbit"><FileJson size={27}/></span>
-            <strong>{busy ? 'Reading fileâ€¦' : 'Drop your JSON here'}</strong><p>or click to browse Â· shape is validated before processing</p>
+            <strong>{busy ? 'Reading file…' : 'Drop your JSON here'}</strong><p>or click to browse · shape is validated before processing</p>
           </div> : <div className="preview">
-            <div className="file-row"><span><FileJson size={18}/></span><div><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(1)} KB Â· Ready to process</small></div><button onClick={() => { setFile(null); setPreview(null) }}><X size={16}/></button></div>
+            <div className="file-row"><span><FileJson size={18}/></span><div><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(1)} KB · Ready to process</small></div><button onClick={() => { setFile(null); setPreview(null) }}><X size={16}/></button></div>
             <div className="preview-stats"><div><strong>{preview.company_count}</strong><span>companies</span></div><div><strong>{preview.candidate_count}</strong><span>candidates</span></div><div><strong>{preview.roles.length}</strong><span>roles detected</span></div></div>
             <div className="roles">{preview.roles.slice(0, 4).map(role => <span key={role}>{role}</span>)}</div>
-            <button className="primary" onClick={processFile} disabled={busy}>{busy ? 'Startingâ€¦' : 'Start signal extraction'} <Sparkles size={16}/></button>
+            <button className="primary" onClick={processFile} disabled={busy}>{busy ? 'Starting…' : 'Start signal extraction'} <Sparkles size={16}/></button>
           </div>}
         </div>
 
@@ -315,7 +450,7 @@ function App() {
           <div className={`dropzone compact ${supplierTypesBusy ? 'busy' : ''}`} onClick={() => !supplierTypesBusy && supplierTypesInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadSupplierTypes(e.dataTransfer.files[0]) }}>
             <input ref={supplierTypesInputRef} type="file" accept=".csv,text/csv" hidden onChange={e => { uploadSupplierTypes(e.target.files[0]); e.target.value = '' }}/>
             <span className="upload-orbit"><FileSpreadsheet size={22}/></span>
-            <strong>{supplierTypesBusy ? 'Setting personasâ€¦' : 'Drop supplier-type CSV'}</strong><p>sets round 2's role for companies not yet scraped</p>
+            <strong>{supplierTypesBusy ? 'Setting personas…' : 'Drop supplier-type CSV'}</strong><p>sets round 2's role for companies not yet scraped</p>
           </div>
           {supplierTypesResult && <div className="domain-result">
             <div className="domain-result-row"><span>Updated</span><strong>{supplierTypesResult.updated_count}</strong></div>
@@ -334,9 +469,9 @@ function App() {
 
       <section className="card table-card">
         <div className="table-title"><div><h2>Company pipeline</h2><p>Every company and its accumulated evidence</p></div><span>{companies.length} total</span></div>
-        <div className="table-tools"><label><Search size={17}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search companiesâ€¦"/></label><div className="select-wrap"><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="all">All statuses</option>{Object.entries(LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><ChevronDown/></div><div className="select-wrap"><select value={sort} onChange={e => setSort(e.target.value)}><option value="name">Sort: Company</option><option value="rounds">Sort: Rounds</option><option value="status">Sort: Status</option></select><ChevronDown/></div></div>
+        <div className="table-tools"><label><Search size={17}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search companies…"/></label><div className="select-wrap"><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="all">All statuses</option>{Object.entries(LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><ChevronDown/></div><div className="select-wrap"><select value={sort} onChange={e => setSort(e.target.value)}><option value="name">Sort: Company</option><option value="rounds">Sort: Rounds</option><option value="status">Sort: Status</option></select><ChevronDown/></div></div>
         <div className="table-scroll"><table><thead><tr><th>Company</th><th>Domain</th><th>Industry</th><th>Status</th><th>Rounds</th><th>Selected decision makers</th><th>Next search</th><th>Actions</th></tr></thead><tbody>
-          {visible.map(company => <tr key={company.id}><td><strong>{company.display_name}</strong><small>{company.roles_tried.join(' â†’ ') || 'No roles yet'}</small></td><td>{company.domain ? <span className="next-role">{company.domain}</span> : <span className="muted">â€”</span>}</td><td><div className="select-wrap compact"><select value={company.industry} onChange={e => setIndustry(company.id, e.target.value)}>{industries.map(i => <option key={i}>{i}</option>)}</select><ChevronDown/></div></td><td><StatusBadge status={company.status}/></td><td><span className="round-pill">{company.rounds_completed}<i>/ 4</i></span></td><td>{company.winners.length ? <div className="winner-list">{company.winners.map(w => <div className="winner-row" key={w.id}><a href={w.url} target="_blank"><span>{w.name.charAt(0)}</span>{w.name}<b>{w.score}</b></a><button className="winner-delete" onClick={() => askDeleteCandidate(w)} title="Delete candidate"><Trash2 size={13}/></button></div>)}</div> : <span className="muted">Awaiting threshold</span>}</td><td>{company.status === 'needs_next_round' ? <span className="next-role">{company.next_role || 'No persona remaining'}</span> : <span className="muted">â€”</span>}</td><td><button className="row-delete" onClick={() => askDeleteCompany(company)} title="Delete company"><Trash2 size={15}/></button></td></tr>)}
+          {visible.map(company => <tr key={company.id}><td><strong>{company.display_name}</strong><small>{company.roles_tried.join(' → ') || 'No roles yet'}</small></td><td>{company.domain ? <span className="next-role">{company.domain}</span> : <span className="muted">—</span>}</td><td><div className="select-wrap compact"><select value={company.industry} onChange={e => setIndustry(company.id, e.target.value)}>{industries.map(i => <option key={i}>{i}</option>)}</select><ChevronDown/></div></td><td><StatusBadge status={company.status}/></td><td><span className="round-pill">{company.rounds_completed}<i>/ 4</i></span></td><td>{company.winners.length ? <div className="winner-list">{company.winners.map(w => <div className="winner-row" key={w.id}><a href={w.url} target="_blank"><span>{w.name.charAt(0)}</span>{w.name}<b>{w.score}</b></a><button className="winner-delete" onClick={() => askDeleteCandidate(w)} title="Delete candidate"><Trash2 size={13}/></button></div>)}</div> : <span className="muted">Awaiting threshold</span>}</td><td>{company.status === 'needs_next_round' ? <span className="next-role">{company.next_role || 'No persona remaining'}</span> : <span className="muted">—</span>}</td><td><button className="row-delete" onClick={() => askDeleteCompany(company)} title="Delete company"><Trash2 size={15}/></button></td></tr>)}
           {!visible.length && <tr><td colSpan="8" className="empty">No companies match this view.</td></tr>}
         </tbody></table></div>
       </section>
@@ -359,7 +494,7 @@ function App() {
           <div className={`dropzone ${opportunityBusy ? 'busy' : ''}`} onClick={() => !opportunityBusy && opportunityInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadOpportunities(e.dataTransfer.files[0]) }}>
             <input ref={opportunityInputRef} type="file" accept=".csv,text/csv" hidden onChange={e => { uploadOpportunities(e.target.files[0]); e.target.value = '' }}/>
             <span className="upload-orbit"><FileSpreadsheet size={27}/></span>
-            <strong>{opportunityBusy ? 'Creating companiesâ€¦' : 'Drop opportunity CSV'}</strong><p>creates/updates companies Â· sets persona sequence from Supplier Type</p>
+            <strong>{opportunityBusy ? 'Creating companies…' : 'Drop opportunity CSV'}</strong><p>creates/updates companies · sets persona sequence from Supplier Type</p>
           </div>
           {opportunityResult && <div className="domain-result">
             <div className="domain-result-row"><span>New companies</span><strong>{opportunityResult.created_count}</strong></div>
@@ -372,21 +507,146 @@ function App() {
           {!peopleFile ? <div className={`dropzone ${mergeBusy ? 'busy' : ''}`} onClick={() => !mergeBusy && peopleInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); choosePeopleFile(e.dataTransfer.files[0]) }}>
             <input ref={peopleInputRef} type="file" accept=".csv,text/csv" hidden onChange={e => choosePeopleFile(e.target.files[0])}/>
             <span className="upload-orbit"><Users size={27}/></span>
-            <strong>Drop people CSV</strong><p>matched to companies by name Â· role &amp; LinkedIn URL come from your winners</p>
+            <strong>Drop people CSV</strong><p>matched to companies by name · role &amp; LinkedIn URL come from your winners</p>
           </div> : <div className="preview">
-            <div className="file-row"><span><FileSpreadsheet size={18}/></span><div><strong>{peopleFile.name}</strong><small>{(peopleFile.size / 1024).toFixed(1)} KB Â· Ready to merge</small></div><button onClick={() => setPeopleFile(null)}><X size={16}/></button></div>
+            <div className="file-row"><span><FileSpreadsheet size={18}/></span><div><strong>{peopleFile.name}</strong><small>{(peopleFile.size / 1024).toFixed(1)} KB · Ready to merge</small></div><button onClick={() => setPeopleFile(null)}><X size={16}/></button></div>
             <div className="merge-summary">
               <div className="merge-summary-stats">
                 <div><strong>{companies.length}</strong><span>companies known</span></div>
               </div>
             </div>
-            <button className="primary" onClick={downloadMerged} disabled={mergeBusy} style={{marginTop: 16}}>{mergeBusy ? 'Mergingâ€¦' : 'Merge & download CSV'} <ArrowDownToLine size={16}/></button>
+            <button className="primary" onClick={downloadMerged} disabled={mergeBusy} style={{marginTop: 16}}>{mergeBusy ? 'Merging…' : 'Merge & download CSV'} <ArrowDownToLine size={16}/></button>
           </div>}
         </div>
       </section>
     </main>}
+
+    {activeTab === 'india' && <main>
+      <section className="hero">
+        <div>
+          <p className="eyebrow india-eyebrow">INDIA PHONE PIPELINE</p>
+          <h1>Source Indian leads.<br/><em>Verify every number.</em></h1>
+          <p className="lede">Upload the India opportunity CSV, enrich with IndiaMart phone numbers, then fill gaps using Serper. Download the final pipeline CSV with verified +91 numbers.</p>
+        </div>
+        <div className="hero-stats">
+          <div><MapPin/><strong>{indiaStats?.total_companies ?? 0}</strong><span>Companies loaded</span></div>
+          <div><Phone/><strong>{indiaStats?.indiamart_phones ?? 0}</strong><span>IndiaMart phones</span></div>
+          <div><Check/><strong>{indiaStats?.serper_phones ?? 0}</strong><span>Serper phones</span></div>
+          <button className="india-refresh-btn" onClick={refreshIndiaStats} disabled={indiaRefreshBusy} title="Refresh counts from database">
+            {indiaRefreshBusy ? '…' : '↻'} Refresh
+          </button>
+          <button className="reset-btn india-reset-btn" onClick={askWipeIndia}><Trash2 size={14}/>Reset India pipeline</button>
+        </div>
+      </section>
+
+      {error && <div className="error"><span>{error}</span><button onClick={() => setError('')}><X size={16}/></button></div>}
+
+      {/* Step indicators */}
+      <div className="india-steps">
+        <div className={`india-step ${indiaOppResult ? 'done' : 'active'}`}>
+          <span>1</span><div><strong>Upload opportunity CSV</strong><p>India companies with scores</p></div>
+        </div>
+        <div className="india-step-arrow">→</div>
+        <div className={`india-step ${indiaMartResult ? 'done' : indiaOppResult ? 'active' : ''}`}>
+          <span>2</span><div><strong>IndiaMart phones</strong><p>Boss uploads IndiaMart JSON</p></div>
+        </div>
+        <div className="india-step-arrow">→</div>
+        <div className={`india-step ${serperResult ? 'done' : indiaMartResult ? 'active' : ''}`}>
+          <span>3</span><div><strong>Serper fill-in</strong><p>Fill gaps for missed companies</p></div>
+        </div>
+        <div className="india-step-arrow">→</div>
+        <div className={`india-step ${serperResult ? 'active' : ''}`}>
+          <span>4</span><div><strong>Export final CSV</strong><p>All companies + phone numbers</p></div>
+        </div>
+      </div>
+
+      <section className="india-grid">
+
+        {/* Step 1: Opportunity CSV */}
+        <div className="card upload-card">
+          <div className="card-heading">
+            <span className="icon-box india-green"><FileSpreadsheet size={20}/></span>
+            <div><h2>India opportunity CSV</h2><p>Company Name, Score, City, State, Supplier Type, Job Role, AI Insight</p></div>
+          </div>
+          <div className={`dropzone ${indiaOppBusy ? 'busy' : ''}`} onClick={() => !indiaOppBusy && indiaOppInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadIndiaOpportunities(e.dataTransfer.files[0]) }}>
+            <input ref={indiaOppInputRef} type="file" accept=".csv,text/csv" hidden onChange={e => { uploadIndiaOpportunities(e.target.files[0]); e.target.value = '' }}/>
+            <span className="upload-orbit india-orbit"><FileSpreadsheet size={27}/></span>
+            <strong>{indiaOppBusy ? 'Loading companies…' : 'Drop India opportunity CSV'}</strong>
+            <p>same format as the main opportunity CSV</p>
+          </div>
+          <IndiaResultBanner result={indiaOppResult} />
+        </div>
+
+        {/* Step 2: IndiaMart JSON */}
+        <div className="card upload-card">
+          <div className="card-heading">
+            <span className="icon-box india-saffron"><FileJson size={20}/></span>
+            <div><h2>IndiaMart phones</h2><p>JSON with company_name + phone_number</p></div>
+          </div>
+          <div className={`dropzone ${indiaMartBusy ? 'busy' : ''}`} onClick={() => !indiaMartBusy && indiaMartInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadIndiaMart(e.dataTransfer.files[0]) }}>
+            <input ref={indiaMartInputRef} type="file" accept=".json,application/json" hidden onChange={e => { uploadIndiaMart(e.target.files[0]); e.target.value = '' }}/>
+            <span className="upload-orbit india-saffron-orbit"><FileJson size={27}/></span>
+            <strong>{indiaMartBusy ? 'Matching numbers…' : 'Drop IndiaMart JSON'}</strong>
+            <p>accepts bare 10-digit or +91-prefixed numbers</p>
+          </div>
+          <IndiaResultBanner result={indiaMartResult} />
+        </div>
+
+      </section>
+
+      {/* Step 2.5: Download still-needed list */}
+      <div className="india-midstep">
+        <div className="india-midstep-inner">
+          <div className="india-midstep-text">
+            <Phone size={16}/>
+            <div>
+              <strong>Download companies still needing a phone</strong>
+              <p>Give this list to your boss to run Serper searches for the missing numbers.</p>
+            </div>
+          </div>
+          <button className="india-download-btn" onClick={downloadIndiaStillNeeded}><ArrowDownToLine size={15}/>Download missing list</button>
+        </div>
+      </div>
+
+      <section className="india-grid">
+
+        {/* Step 3: Serper JSON */}
+        <div className="card upload-card">
+          <div className="card-heading">
+            <span className="icon-box india-blue"><Search size={20}/></span>
+            <div><h2>Serper phones</h2><p>JSON with query + phone + country</p></div>
+          </div>
+          <div className={`dropzone ${serperBusy ? 'busy' : ''}`} onClick={() => !serperBusy && serperInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadSerper(e.dataTransfer.files[0]) }}>
+            <input ref={serperInputRef} type="file" accept=".json,application/json" hidden onChange={e => { uploadSerper(e.target.files[0]); e.target.value = '' }}/>
+            <span className="upload-orbit india-blue-orbit"><Search size={27}/></span>
+            <strong>{serperBusy ? 'Validating numbers…' : 'Drop Serper JSON'}</strong>
+            <p>non-India results (US, UK, etc.) are automatically rejected</p>
+          </div>
+          <IndiaResultBanner result={serperResult} />
+        </div>
+
+        {/* Step 4: Final export */}
+        <div className="card upload-card india-export-card">
+          <div className="card-heading">
+            <span className="icon-box india-green"><ArrowDownToLine size={20}/></span>
+            <div><h2>Final India pipeline CSV</h2><p>All companies · verified +91 numbers · urgency scores</p></div>
+          </div>
+          <div className="india-export-body">
+            <div className="india-export-cols">
+              {['Company name', 'Score', 'Job title', 'Supplier type', 'City', 'State', 'Phone (+91)', 'Contact details', 'AI insight', 'Urgency'].map(col => (
+                <span key={col} className="india-col-pill">{col}</span>
+              ))}
+            </div>
+            <p className="india-export-note">Urgency is <strong>High</strong> when score ≥ 80. Phone is blank for companies with no verified number yet.</p>
+            <button className="primary india-dl-btn" onClick={downloadIndiaPipeline}><ArrowDownToLine size={16}/>Download India pipeline CSV</button>
+          </div>
+        </div>
+
+      </section>
+    </main>}
+
     <ConfirmDialog action={confirmAction} busy={busy} onCancel={() => setConfirmAction(null)} onConfirm={runConfirmedDelete} />
-    <footer>Signal Desk <span>Â·</span> Scores are deterministic. Gemini extracts evidence only.</footer>
+    <footer>Signal Desk <span>·</span> Scores are deterministic. Gemini extracts evidence only.</footer>
   </div>
 }
 

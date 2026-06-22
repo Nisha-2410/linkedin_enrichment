@@ -1,4 +1,4 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
 
 .header-actions {
     display: flex;
@@ -504,6 +504,15 @@ main {
 .dropzone.busy {
     opacity: .65;
     cursor: wait
+}
+
+.dropzone.busy .upload-orbit {
+    animation: india-spin 0.9s linear infinite
+}
+
+@keyframes india-spin {
+    from { transform: rotate(0deg) }
+    to { transform: rotate(360deg) }
 }
 
 .upload-orbit {
@@ -1320,5 +1329,391 @@ footer span {
 
     .export-card>b {
         display: none
+    }
+}
+/* ─── India Pipeline tab ─────────────────────────────────────────────────── */
+
+.tab-bar button:nth-child(3).active {
+    background: rgba(249, 115, 22, .12);
+    color: #fb923c
+}
+
+.india-eyebrow {
+    color: #fb923c !important
+}
+
+/* Step tracker */
+.india-steps {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 32px;
+    background: linear-gradient(145deg, rgba(14, 29, 47, .97), rgba(10, 23, 38, .97));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 28px
+}
+
+.india-step {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    opacity: .35
+}
+
+.india-step.active {
+    opacity: 1
+}
+
+.india-step.done {
+    opacity: .7
+}
+
+.india-step.done>span {
+    background: rgba(52, 211, 153, .15);
+    border-color: rgba(52, 211, 153, .35);
+    color: #34d399
+}
+
+.india-step>span {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(251, 146, 60, .3);
+    background: rgba(249, 115, 22, .08);
+    color: #fb923c;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0
+}
+
+.india-step.active>span {
+    border-color: #fb923c;
+    background: rgba(249, 115, 22, .15);
+    box-shadow: 0 0 12px rgba(249, 115, 22, .2)
+}
+
+.india-step strong {
+    font: 700 12px Manrope;
+    color: #dbe7f5;
+    display: block
+}
+
+.india-step p {
+    font-size: 10px;
+    color: #6f8097;
+    margin: 3px 0 0
+}
+
+.india-step-arrow {
+    color: #374759;
+    font-size: 16px;
+    padding: 0 12px;
+    flex-shrink: 0
+}
+
+/* Grid */
+.india-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-bottom: 18px
+}
+
+/* Icon box colours */
+.icon-box.india-green {
+    color: #34d399;
+    background: rgba(52, 211, 153, .09);
+    border-color: rgba(52, 211, 153, .14)
+}
+
+.icon-box.india-saffron {
+    color: #fb923c;
+    background: rgba(249, 115, 22, .09);
+    border-color: rgba(249, 115, 22, .14)
+}
+
+.icon-box.india-blue {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, .09);
+    border-color: rgba(96, 165, 250, .14)
+}
+
+/* Orbit colours for India dropzones */
+.upload-orbit.india-orbit {
+    color: #34d399;
+    background: rgba(52, 211, 153, .07);
+    border-color: rgba(52, 211, 153, .11)
+}
+
+.upload-orbit.india-saffron-orbit {
+    color: #fb923c;
+    background: rgba(249, 115, 22, .07);
+    border-color: rgba(249, 115, 22, .11)
+}
+
+.upload-orbit.india-blue-orbit {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, .07);
+    border-color: rgba(96, 165, 250, .11)
+}
+
+/* Result banner */
+.india-result {
+    margin-top: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    background: rgba(255, 255, 255, .025)
+}
+
+.india-result-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px
+}
+
+.india-result-row + .india-result-row {
+    margin-top: 6px
+}
+
+.india-result-row strong {
+    font: 700 15px Manrope;
+    color: #edf4fc
+}
+
+.india-result-warning {
+    margin-top: 10px;
+    font-size: 10px;
+    color: #f0a85f;
+    line-height: 1.5
+}
+
+.india-result-fuzzy {
+    color: #fcd34d
+}
+
+.india-result-fuzzy strong {
+    color: #fcd34d !important
+}
+
+.india-result-total {
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border)
+}
+
+.india-result-total strong {
+    color: #5eead4 !important
+}
+
+.india-result-done strong {
+    color: #86efac !important
+}
+
+.india-result-left strong {
+    color: #f0a85f !important
+}
+
+.india-result-warning-row {
+    color: #f0a85f
+}
+
+.india-result-warning-row strong {
+    color: #f0a85f !important
+}
+
+.india-result-fuzzy-list {
+    margin-top: 10px;
+    border-top: 1px solid rgba(252, 211, 77, .2);
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px
+}
+
+.india-result-fuzzy-list p {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    margin: 0
+}
+
+.fuzzy-scraped {
+    color: var(--muted);
+    font-style: italic
+}
+
+.fuzzy-arrow {
+    color: #fcd34d;
+    font-size: 10px
+}
+
+.fuzzy-matched {
+    color: #86efac;
+    font-weight: 600
+}
+
+/* Mid-step download bar */
+.india-midstep {
+    margin-bottom: 18px
+}
+
+.india-midstep-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 22px;
+    background: linear-gradient(145deg, rgba(14, 29, 47, .97), rgba(10, 23, 38, .97));
+    border: 1px dashed rgba(96, 165, 250, .3);
+    border-radius: 14px;
+    gap: 16px
+}
+
+.india-midstep-text {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #60a5fa
+}
+
+.india-midstep-text strong {
+    font: 700 13px Manrope;
+    color: #dbe7f5;
+    display: block
+}
+
+.india-midstep-text p {
+    font-size: 11px;
+    color: #6f8097;
+    margin: 3px 0 0
+}
+
+.india-download-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 16px;
+    border-radius: 10px;
+    background: rgba(96, 165, 250, .1);
+    border: 1px solid rgba(96, 165, 250, .25);
+    color: #93c5fd;
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+    cursor: pointer
+}
+
+.india-download-btn:hover {
+    background: rgba(96, 165, 250, .18);
+    border-color: rgba(96, 165, 250, .45)
+}
+
+.india-refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    margin-top: 4px;
+    transition: background 0.15s, color 0.15s
+}
+
+.india-refresh-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, .09);
+    color: var(--fg)
+}
+
+.india-refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed
+}
+
+.india-reset-btn {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 13px;
+    border-radius: 9px;
+    margin-top: 4px
+}
+
+/* Export card */
+.india-export-card {
+    border-color: rgba(52, 211, 153, .18)
+}
+
+.india-export-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px
+}
+
+.india-export-cols {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px
+}
+
+.india-col-pill {
+    font-size: 10px;
+    color: #6ee7b7;
+    background: rgba(52, 211, 153, .07);
+    border: 1px solid rgba(52, 211, 153, .15);
+    padding: 4px 9px;
+    border-radius: 6px
+}
+
+.india-export-note {
+    font-size: 11px;
+    color: #6f8097;
+    margin: 0;
+    line-height: 1.6
+}
+
+.india-export-note strong {
+    color: #fbbf24
+}
+
+.india-dl-btn {
+    text-decoration: none;
+    margin-top: 0 !important
+}
+
+@media(max-width:900px) {
+    .india-grid {
+        grid-template-columns: 1fr
+    }
+
+    .india-steps {
+        flex-wrap: wrap;
+        gap: 12px
+    }
+
+    .india-step-arrow {
+        display: none
+    }
+
+    .india-midstep-inner {
+        flex-direction: column;
+        align-items: flex-start
+    }
+
+    .india-download-btn {
+        width: 100%;
+        justify-content: center
     }
 }
