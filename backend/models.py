@@ -15,6 +15,7 @@ class Company(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String)
+    domain: Mapped[str | None] = mapped_column(String, nullable=True)
     industry: Mapped[str] = mapped_column(String, default="default")
     status: Mapped[str] = mapped_column(String, default="needs_next_round")
     rounds_completed: Mapped[int] = mapped_column(Integer, default=0)
@@ -22,6 +23,28 @@ class Company(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     candidates: Mapped[list["Candidate"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+
+
+class OpportunityCompany(Base):
+    """Lives entirely in the Merge & Export tab's world -- populated by
+    apply_opportunity_records() from the boss's opportunity-scoring CSV.
+    Deliberately has NO foreign key to Company; the two tables are matched
+    only by normalized name, read-only, at merge-download time and (for
+    next_persona's supplier_type hint) at suggestion time. Uploading an
+    opportunity CSV must never write to the scraping pipeline's Company rows."""
+    __tablename__ = "opportunity_companies"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String)
+    opportunity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    city: Mapped[str | None] = mapped_column(String, nullable=True)
+    state: Mapped[str | None] = mapped_column(String, nullable=True)
+    job_role_posted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supplier_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    ai_insight: Mapped[str | None] = mapped_column(Text, nullable=True)
+    contact_details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Candidate(Base):
@@ -99,4 +122,3 @@ class Observation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     company: Mapped[Company] = relationship()
     candidate: Mapped[Candidate] = relationship(back_populates="observations")
-

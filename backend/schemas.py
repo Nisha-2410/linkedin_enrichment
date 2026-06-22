@@ -1,6 +1,7 @@
 ﻿from typing import Literal
+import re
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 class UploadRecord(BaseModel):
@@ -36,6 +37,136 @@ class UploadRecord(BaseModel):
         if value is None:
             return ""
         return " ".join(str(value).split())
+
+
+class DomainRecord(BaseModel):
+    company_name: str = Field(min_length=1, validation_alias=AliasChoices("company_name", "company"))
+    domain: str = Field(
+        min_length=1, validation_alias=AliasChoices("domain", "company_domain", "website", "url")
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("company_name")
+    @classmethod
+    def strip_company_name(cls, value):
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("domain")
+    @classmethod
+    def normalize_domain(cls, value):
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("must not be blank")
+        # Accept either a bare domain ("acme.com") or a full URL
+        # ("https://www.acme.com/about") -- strip protocol, leading "www.",
+        # and any path/query so both forms land on the same value.
+        value = re.sub(r"^[a-z][a-z0-9+.\-]*://", "", value)
+        value = value.split("/", 1)[0]
+        value = value.split("?", 1)[0]
+        if value.startswith("www."):
+            value = value[4:]
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class OpportunityRecord(BaseModel):
+    """One row from the boss's opportunity-scoring CSV (Company Name, Company
+    Opportunity Score, City, State, Supplier Type, Job Role, AI Insight, ...).
+    Field names use the literal CSV headers as aliases since this comes
+    straight from a csv.DictReader, not hand-written JSON."""
+
+    company_name: str = Field(min_length=1, validation_alias=AliasChoices("Company Name", "company_name"))
+    opportunity_score: float | None = Field(
+        default=None, validation_alias=AliasChoices("Company Opportunity Score", "opportunity_score")
+    )
+    city: str = Field(default="", validation_alias=AliasChoices("City", "city"))
+    state: str = Field(default="", validation_alias=AliasChoices("State", "state"))
+    supplier_type: str = Field(default="", validation_alias=AliasChoices("Supplier Type", "supplier_type"))
+    job_role: str = Field(default="", validation_alias=AliasChoices("Job Role", "job_role"))
+    ai_insight: str = Field(default="", validation_alias=AliasChoices("AI Insight", "ai_insight"))
+    contact_details: str = Field(default="", validation_alias=AliasChoices("Contact Details", "contact_details"))
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("company_name")
+    @classmethod
+    def strip_company_name(cls, value):
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("opportunity_score", mode="before")
+    @classmethod
+    def blank_score_to_none(cls, value):
+        # The CSV can hand us "", None, or a numeric string depending on the
+        # exporting tool -- only an actual blank should become None; a real
+        # numeric string still needs to parse as a number afterward.
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
+
+    @field_validator("city", "state", "supplier_type", "job_role", "ai_insight", "contact_details", mode="before")
+    @classmethod
+    def blank_string_field(cls, value):
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def primary_supplier_type(self):
+        """First ';'-separated Supplier Type value, used to pick the round
+        sequence from personas.json. Picking the FIRST one is a deliberate,
+        simple tiebreak for companies with multiple supplier types -- not an
+        attempt to rank them by relevance."""
+        first = self.supplier_type.split(";")[0].strip()
+        return first
+
+    def primary_city(self):
+        return self.city.split(";")[0].strip()
+
+    def primary_state(self):
+        return self.state.split(";")[0].strip()
+
+
+class PersonRecord(BaseModel):
+    """One row from the people CSV: first_name, last_name, company_name,
+    company_url, email, linkedin_url. The linkedin_url here is read but
+    NOT used in the merged export -- role + linkedin_url in the final CSV
+    always come from the matched winner Candidate instead (see
+    build_merged_rows), so this field exists only for completeness/future use."""
+
+    first_name: str = Field(default="", validation_alias=AliasChoices("first_name", "First Name"))
+    last_name: str = Field(default="", validation_alias=AliasChoices("last_name", "Last Name"))
+    company_name: str = Field(min_length=1, validation_alias=AliasChoices("company_name", "Company Name"))
+    company_url: str = Field(default="", validation_alias=AliasChoices("company_url", "Company URL"))
+    email: str = Field(default="", validation_alias=AliasChoices("email", "Email"))
+    linkedin_url: str = Field(default="", validation_alias=AliasChoices("linkedin_url", "LinkedIn URL"))
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("company_name")
+    @classmethod
+    def strip_company_name(cls, value):
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("first_name", "last_name", "company_url", "email", "linkedin_url", mode="before")
+    @classmethod
+    def blank_string_field(cls, value):
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def full_name(self):
+        parts = [self.first_name, self.last_name]
+        return " ".join(p for p in parts if p)
 
 
 class GeminiItem(BaseModel):

@@ -37,9 +37,72 @@ def _migrate_sqlite():
         return
     columns = {column["name"] for column in inspector.get_columns("candidates")}
     observation_columns = {column["name"] for column in inspector.get_columns("observations")}
+    company_columns = (
+        {column["name"] for column in inspector.get_columns("companies")}
+        if "companies" in inspector.get_table_names()
+        else set()
+    )
     with engine.begin() as connection:
         if "display_name" not in columns:
             connection.execute(text("ALTER TABLE candidates ADD COLUMN display_name VARCHAR DEFAULT ''"))
+        if company_columns and "domain" not in company_columns:
+            connection.execute(text("ALTER TABLE companies ADD COLUMN domain VARCHAR"))
+        if "opportunity_companies" in inspector.get_table_names():
+            opportunity_company_columns = {
+                column["name"] for column in inspector.get_columns("opportunity_companies")
+            }
+            if "contact_details" not in opportunity_company_columns:
+                connection.execute(text("ALTER TABLE opportunity_companies ADD COLUMN contact_details TEXT"))
+        # One-time backfill: earlier versions of this app stored opportunity-
+        # scoring data (opportunity_score, city, state, job_role_posted,
+        # supplier_type, ai_insight, and the even older combined
+        # location_summary) directly on companies. OpportunityCompany is now
+        # the only place that data lives going forward -- this copies
+        # whatever's still sitting on the legacy companies columns into
+        # opportunity_companies ONCE, matched by name, then never touches
+        # those legacy columns again. They're left in place on companies
+        # (SQLite can't cheaply drop columns) but the app code never reads
+        # them after this point.
+        legacy_opportunity_columns = {
+            "opportunity_score", "city", "state", "job_role_posted", "supplier_type", "ai_insight",
+        }
+        if company_columns and legacy_opportunity_columns & company_columns and "opportunity_companies" in inspector.get_table_names():
+            already_seeded = connection.execute(text("SELECT COUNT(*) FROM opportunity_companies")).scalar()
+            if not already_seeded:
+                has_location_summary = "location_summary" in company_columns
+                city_expr = (
+                    "CASE WHEN city IS NOT NULL AND city != '' THEN city "
+                    "WHEN location_summary IS NOT NULL AND instr(location_summary, ',') > 0 "
+                    "THEN trim(substr(location_summary, 1, instr(location_summary, ',') - 1)) "
+                    "ELSE city END"
+                    if has_location_summary else "city"
+                )
+                state_expr = (
+                    "CASE WHEN state IS NOT NULL AND state != '' THEN state "
+                    "WHEN location_summary IS NOT NULL AND instr(location_summary, ',') > 0 "
+                    "THEN trim(substr(location_summary, instr(location_summary, ',') + 1)) "
+                    "WHEN location_summary IS NOT NULL AND location_summary != '' THEN location_summary "
+                    "ELSE state END"
+                    if has_location_summary else "state"
+                )
+                connection.execute(
+                    text(
+                        f"""
+                        INSERT INTO opportunity_companies
+                            (name, display_name, opportunity_score, city, state,
+                             job_role_posted, supplier_type, ai_insight, created_at, updated_at)
+                        SELECT
+                            name, display_name, opportunity_score,
+                            {city_expr}, {state_expr},
+                            job_role_posted, supplier_type, ai_insight,
+                            created_at, updated_at
+                        FROM companies
+                        WHERE opportunity_score IS NOT NULL
+                           OR (supplier_type IS NOT NULL AND supplier_type != '')
+                           OR (job_role_posted IS NOT NULL AND job_role_posted != '')
+                        """
+                    )
+                )
         for column_name, ddl in {
             "person_name": "VARCHAR",
             "companies_found": "JSON",
@@ -71,4 +134,3 @@ def get_db():
         yield db
     finally:
         db.close()
-

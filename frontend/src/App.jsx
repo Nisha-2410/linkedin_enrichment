@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, Building2, Check, ChevronDown, FileJson, Search, Sparkles, Trash2, UploadCloud, Users, X } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, Building2, Check, ChevronDown, FileJson, FileSpreadsheet, Globe, LayoutGrid, Search, Sparkles, Trash2, UploadCloud, Users, UsersRound, X } from 'lucide-react'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 const LABELS = {
@@ -60,7 +60,21 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [confirmAction, setConfirmAction] = useState(null)
+  const [domainBusy, setDomainBusy] = useState(false)
+  const [domainResult, setDomainResult] = useState(null)
+  const [supplierTypesBusy, setSupplierTypesBusy] = useState(false)
+  const [supplierTypesResult, setSupplierTypesResult] = useState(null)
+  const [activeTab, setActiveTab] = useState('pipeline')
+  const [opportunityFile, setOpportunityFile] = useState(null)
+  const [opportunityBusy, setOpportunityBusy] = useState(false)
+  const [opportunityResult, setOpportunityResult] = useState(null)
+  const [peopleFile, setPeopleFile] = useState(null)
+  const [mergeBusy, setMergeBusy] = useState(false)
   const inputRef = useRef(null)
+  const domainInputRef = useRef(null)
+  const supplierTypesInputRef = useRef(null)
+  const opportunityInputRef = useRef(null)
+  const peopleInputRef = useRef(null)
 
   const refreshCompanies = async () => {
     try {
@@ -103,6 +117,68 @@ function App() {
       setJob(current); setFile(null); setPreview(null); await refreshCompanies()
     } catch (err) { setError(err.message) }
     finally { setBusy(false) }
+  }
+
+  const uploadDomains = async (selected) => {
+    if (!selected) return
+    setDomainBusy(true); setError(''); setDomainResult(null)
+    const body = new FormData(); body.append('file', selected)
+    try {
+      const result = await api('/uploads/domains', { method: 'POST', body })
+      setDomainResult(result)
+      await refreshCompanies()
+    } catch (err) { setError(err.message) }
+    finally { setDomainBusy(false) }
+  }
+
+  const uploadSupplierTypes = async (selected) => {
+    if (!selected) return
+    setSupplierTypesBusy(true); setError(''); setSupplierTypesResult(null)
+    const body = new FormData(); body.append('file', selected)
+    try {
+      const result = await api('/uploads/supplier-types', { method: 'POST', body })
+      setSupplierTypesResult(result)
+      await refreshCompanies()
+    } catch (err) { setError(err.message) }
+    finally { setSupplierTypesBusy(false) }
+  }
+
+  const uploadOpportunities = async (selected) => {
+    if (!selected) return
+    setOpportunityFile(selected); setOpportunityBusy(true); setError(''); setOpportunityResult(null)
+    const body = new FormData(); body.append('file', selected)
+    try {
+      const result = await api('/uploads/opportunities', { method: 'POST', body })
+      setOpportunityResult(result)
+      await refreshCompanies()
+    } catch (err) { setError(err.message); setOpportunityFile(null) }
+    finally { setOpportunityBusy(false) }
+  }
+
+  const choosePeopleFile = (selected) => {
+    if (!selected) return
+    setPeopleFile(selected); setError('')
+  }
+
+  const downloadMerged = async () => {
+    if (!peopleFile) return
+    setMergeBusy(true); setError('')
+    const body = new FormData(); body.append('file', peopleFile)
+    try {
+      const response = await fetch(`${API}/exports/merged.csv`, { method: 'POST', body })
+      if (!response.ok) {
+        let detail = 'Something went wrong'
+        try { detail = (await response.json()).detail || detail } catch {}
+        throw new Error(detail)
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url; link.download = 'merged-operational.csv'
+      document.body.appendChild(link); link.click(); link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) { setError(err.message) }
+    finally { setMergeBusy(false) }
   }
 
   const rerunPendingBatch = async () => {
@@ -179,10 +255,14 @@ function App() {
   return <div className="app-shell">
     <header>
       <a className="brand" href="#"><span className="brand-mark"><Sparkles size={18} /></span><span>Signal Desk<small>Decision maker discovery</small></span></a>
+      <div className="tab-bar">
+        <button className={activeTab === 'pipeline' ? 'active' : ''} onClick={() => setActiveTab('pipeline')}><LayoutGrid size={15}/>Pipeline</button>
+        <button className={activeTab === 'merge' ? 'active' : ''} onClick={() => setActiveTab('merge')}><UsersRound size={15}/>Merge & Export</button>
+      </div>
       <div className="header-actions"><div className="system"><i /> Local workspace Â· persistent</div><button className="reset-btn" onClick={askWipeAll}><Trash2 size={15}/>Reset workspace</button></div>
     </header>
 
-    <main>
+    {activeTab === 'pipeline' && <main>
       <section className="hero">
         <div><p className="eyebrow">LINKEDIN SIGNAL INTELLIGENCE</p><h1>Find the right people.<br/><em>Stop when the evidence is strong.</em></h1><p className="lede">Upload scraped results, extract signals with Gemini, and let deterministic scoring do the deciding.</p></div>
         <div className="hero-stats">
@@ -215,6 +295,35 @@ function App() {
           <div className="mini-metrics"><div><span className="green-dot"/><strong>{job?.companies_resolved ?? resolved}</strong><small>Resolved</small></div><div><span className="amber-dot"/><strong>{retryableCount}</strong><small>Can rerun</small></div><div><span className="red-dot"/><strong>{job?.failed_candidates || 0}</strong><small>Failures</small></div></div>
           <button className="secondary" onClick={rerunPendingBatch} disabled={busy || !retryableCount}>{busy ? 'Starting rerun...' : `Rerun pending batch (${retryableCount})`}</button>
         </div>
+
+        <div className="card upload-card">
+          <div className="card-heading"><span className="icon-box amber"><Globe size={20}/></span><div><h2>Company domains</h2><p>{`{company_name, domain}`} JSON</p></div></div>
+          <div className={`dropzone compact ${domainBusy ? 'busy' : ''}`} onClick={() => !domainBusy && domainInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadDomains(e.dataTransfer.files[0]) }}>
+            <input ref={domainInputRef} type="file" accept=".json,application/json" hidden onChange={e => { uploadDomains(e.target.files[0]); e.target.value = '' }}/>
+            <span className="upload-orbit"><Globe size={22}/></span>
+            <strong>{domainBusy ? 'Matching companies…' : 'Drop domain JSON'}</strong><p>attaches a domain to each matching company</p>
+          </div>
+          {domainResult && <div className="domain-result">
+            <div className="domain-result-row"><span>Matched</span><strong>{domainResult.matched_count}</strong></div>
+            <div className="domain-result-row"><span>Unmatched</span><strong>{domainResult.unmatched_count}</strong></div>
+            {domainResult.unmatched_company_names.length > 0 && <p className="domain-result-unmatched">No existing company for: {domainResult.unmatched_company_names.join(', ')}</p>}
+          </div>}
+        </div>
+
+        <div className="card upload-card">
+          <div className="card-heading"><span className="icon-box violet"><FileSpreadsheet size={20}/></span><div><h2>Supplier types</h2><p>Company Name + Supplier Type CSV</p></div></div>
+          <div className={`dropzone compact ${supplierTypesBusy ? 'busy' : ''}`} onClick={() => !supplierTypesBusy && supplierTypesInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadSupplierTypes(e.dataTransfer.files[0]) }}>
+            <input ref={supplierTypesInputRef} type="file" accept=".csv,text/csv" hidden onChange={e => { uploadSupplierTypes(e.target.files[0]); e.target.value = '' }}/>
+            <span className="upload-orbit"><FileSpreadsheet size={22}/></span>
+            <strong>{supplierTypesBusy ? 'Setting personasâ€¦' : 'Drop supplier-type CSV'}</strong><p>sets round 2's role for companies not yet scraped</p>
+          </div>
+          {supplierTypesResult && <div className="domain-result">
+            <div className="domain-result-row"><span>Updated</span><strong>{supplierTypesResult.updated_count}</strong></div>
+            <div className="domain-result-row"><span>Locked (already scraping)</span><strong>{supplierTypesResult.skipped_locked_count}</strong></div>
+            <div className="domain-result-row"><span>Unmatched</span><strong>{supplierTypesResult.unmatched_count}</strong></div>
+            {supplierTypesResult.unmatched_company_names.length > 0 && <p className="domain-result-unmatched">No existing company for: {supplierTypesResult.unmatched_company_names.join(', ')}</p>}
+          </div>}
+        </div>
       </section>
 
       <section className="export-grid">
@@ -226,12 +335,56 @@ function App() {
       <section className="card table-card">
         <div className="table-title"><div><h2>Company pipeline</h2><p>Every company and its accumulated evidence</p></div><span>{companies.length} total</span></div>
         <div className="table-tools"><label><Search size={17}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search companiesâ€¦"/></label><div className="select-wrap"><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="all">All statuses</option>{Object.entries(LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><ChevronDown/></div><div className="select-wrap"><select value={sort} onChange={e => setSort(e.target.value)}><option value="name">Sort: Company</option><option value="rounds">Sort: Rounds</option><option value="status">Sort: Status</option></select><ChevronDown/></div></div>
-        <div className="table-scroll"><table><thead><tr><th>Company</th><th>Industry</th><th>Status</th><th>Rounds</th><th>Selected decision makers</th><th>Next search</th><th>Actions</th></tr></thead><tbody>
-          {visible.map(company => <tr key={company.id}><td><strong>{company.display_name}</strong><small>{company.roles_tried.join(' â†’ ') || 'No roles yet'}</small></td><td><div className="select-wrap compact"><select value={company.industry} onChange={e => setIndustry(company.id, e.target.value)}>{industries.map(i => <option key={i}>{i}</option>)}</select><ChevronDown/></div></td><td><StatusBadge status={company.status}/></td><td><span className="round-pill">{company.rounds_completed}<i>/ 4</i></span></td><td>{company.winners.length ? <div className="winner-list">{company.winners.map(w => <div className="winner-row" key={w.id}><a href={w.url} target="_blank"><span>{w.name.charAt(0)}</span>{w.name}<b>{w.score}</b></a><button className="winner-delete" onClick={() => askDeleteCandidate(w)} title="Delete candidate"><Trash2 size={13}/></button></div>)}</div> : <span className="muted">Awaiting threshold</span>}</td><td>{company.status === 'needs_next_round' ? <span className="next-role">{company.next_role || 'No persona remaining'}</span> : <span className="muted">â€”</span>}</td><td><button className="row-delete" onClick={() => askDeleteCompany(company)} title="Delete company"><Trash2 size={15}/></button></td></tr>)}
-          {!visible.length && <tr><td colSpan="7" className="empty">No companies match this view.</td></tr>}
+        <div className="table-scroll"><table><thead><tr><th>Company</th><th>Domain</th><th>Industry</th><th>Status</th><th>Rounds</th><th>Selected decision makers</th><th>Next search</th><th>Actions</th></tr></thead><tbody>
+          {visible.map(company => <tr key={company.id}><td><strong>{company.display_name}</strong><small>{company.roles_tried.join(' â†’ ') || 'No roles yet'}</small></td><td>{company.domain ? <span className="next-role">{company.domain}</span> : <span className="muted">â€”</span>}</td><td><div className="select-wrap compact"><select value={company.industry} onChange={e => setIndustry(company.id, e.target.value)}>{industries.map(i => <option key={i}>{i}</option>)}</select><ChevronDown/></div></td><td><StatusBadge status={company.status}/></td><td><span className="round-pill">{company.rounds_completed}<i>/ 4</i></span></td><td>{company.winners.length ? <div className="winner-list">{company.winners.map(w => <div className="winner-row" key={w.id}><a href={w.url} target="_blank"><span>{w.name.charAt(0)}</span>{w.name}<b>{w.score}</b></a><button className="winner-delete" onClick={() => askDeleteCandidate(w)} title="Delete candidate"><Trash2 size={13}/></button></div>)}</div> : <span className="muted">Awaiting threshold</span>}</td><td>{company.status === 'needs_next_round' ? <span className="next-role">{company.next_role || 'No persona remaining'}</span> : <span className="muted">â€”</span>}</td><td><button className="row-delete" onClick={() => askDeleteCompany(company)} title="Delete company"><Trash2 size={15}/></button></td></tr>)}
+          {!visible.length && <tr><td colSpan="8" className="empty">No companies match this view.</td></tr>}
         </tbody></table></div>
       </section>
-    </main>
+    </main>}
+
+    {activeTab === 'merge' && <main>
+      <section className="hero">
+        <div><p className="eyebrow">OPPORTUNITY + PEOPLE</p><h1>Bring in leads.<br/><em>Merge them into one workable list.</em></h1><p className="lede">Upload the boss's opportunity-scoring CSV to auto-create companies and set their search persona, then upload a people CSV to produce one final operational export.</p></div>
+        <div className="hero-stats">
+          <div><Building2/><strong>{opportunityResult ? opportunityResult.created_count + opportunityResult.updated_count : 0}</strong><span>Companies in last upload</span></div>
+          <div><Sparkles/><strong>{industries.length}</strong><span>Persona sequences known</span></div>
+        </div>
+      </section>
+
+      {error && <div className="error"><span>{error}</span><button onClick={() => setError('')}><X size={16}/></button></div>}
+
+      <section className="merge-grid">
+        <div className="card upload-card">
+          <div className="card-heading"><span className="icon-box violet"><FileSpreadsheet size={20}/></span><div><h2>Opportunity scoring CSV</h2><p>Company Name, Opportunity Score, Supplier Type, ...</p></div></div>
+          <div className={`dropzone ${opportunityBusy ? 'busy' : ''}`} onClick={() => !opportunityBusy && opportunityInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadOpportunities(e.dataTransfer.files[0]) }}>
+            <input ref={opportunityInputRef} type="file" accept=".csv,text/csv" hidden onChange={e => { uploadOpportunities(e.target.files[0]); e.target.value = '' }}/>
+            <span className="upload-orbit"><FileSpreadsheet size={27}/></span>
+            <strong>{opportunityBusy ? 'Creating companiesâ€¦' : 'Drop opportunity CSV'}</strong><p>creates/updates companies Â· sets persona sequence from Supplier Type</p>
+          </div>
+          {opportunityResult && <div className="domain-result">
+            <div className="domain-result-row"><span>New companies</span><strong>{opportunityResult.created_count}</strong></div>
+            <div className="domain-result-row"><span>Updated companies</span><strong>{opportunityResult.updated_count}</strong></div>
+          </div>}
+        </div>
+
+        <div className="card upload-card">
+          <div className="card-heading"><span className="icon-box amber"><Users size={20}/></span><div><h2>People CSV</h2><p>first_name, last_name, company_name, company_url, email, linkedin_url</p></div></div>
+          {!peopleFile ? <div className={`dropzone ${mergeBusy ? 'busy' : ''}`} onClick={() => !mergeBusy && peopleInputRef.current.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); choosePeopleFile(e.dataTransfer.files[0]) }}>
+            <input ref={peopleInputRef} type="file" accept=".csv,text/csv" hidden onChange={e => choosePeopleFile(e.target.files[0])}/>
+            <span className="upload-orbit"><Users size={27}/></span>
+            <strong>Drop people CSV</strong><p>matched to companies by name Â· role &amp; LinkedIn URL come from your winners</p>
+          </div> : <div className="preview">
+            <div className="file-row"><span><FileSpreadsheet size={18}/></span><div><strong>{peopleFile.name}</strong><small>{(peopleFile.size / 1024).toFixed(1)} KB Â· Ready to merge</small></div><button onClick={() => setPeopleFile(null)}><X size={16}/></button></div>
+            <div className="merge-summary">
+              <div className="merge-summary-stats">
+                <div><strong>{companies.length}</strong><span>companies known</span></div>
+              </div>
+            </div>
+            <button className="primary" onClick={downloadMerged} disabled={mergeBusy} style={{marginTop: 16}}>{mergeBusy ? 'Mergingâ€¦' : 'Merge & download CSV'} <ArrowDownToLine size={16}/></button>
+          </div>}
+        </div>
+      </section>
+    </main>}
     <ConfirmDialog action={confirmAction} busy={busy} onCancel={() => setConfirmAction(null)} onConfirm={runConfirmedDelete} />
     <footer>Signal Desk <span>Â·</span> Scores are deterministic. Gemini extracts evidence only.</footer>
   </div>

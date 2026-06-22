@@ -1,4 +1,6 @@
 ﻿import asyncio
+import csv
+import io
 import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -11,14 +13,18 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from .csv_export import audit_csv, final_csv, still_needed_csv
+from .csv_export import audit_csv, final_csv, still_needed_csv, merged_csv
 from .config import MAX_ROUNDS
 from .db import SessionLocal, get_db, init_db
 from .job_processor import process_job, rpm_usage
-from .models import Candidate, Company, Job, Observation
-from .schemas import IndustryUpdate, UploadRecord
+from .models import Candidate, Company, Job, Observation, OpportunityCompany
+from .schemas import DomainRecord, IndustryUpdate, OpportunityRecord, PersonRecord, UploadRecord
 from .services import (
     PERSONAS,
+    apply_domain_records,
+    apply_opportunity_records,
+    apply_supplier_types,
+    build_merged_rows,
     candidate_display_name,
     delete_candidate,
     delete_company,
@@ -30,20 +36,70 @@ from .services import (
 )
 
 
-def parse_upload(raw: bytes):
+def _parse_json_array(raw: bytes, model, noun: str):
     try:
         data = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HTTPException(422, f"Invalid JSON: {exc}") from exc
     if not isinstance(data, list):
-        raise HTTPException(422, "The JSON root must be an array of search-result objects.")
+        raise HTTPException(422, f"The JSON root must be an array of {noun} objects.")
     try:
-        return TypeAdapter(list[UploadRecord]).validate_python(data)
+        return TypeAdapter(list[model]).validate_python(data)
     except ValidationError as exc:
         errors = exc.errors(include_url=False)
         first = errors[0] if errors else {}
         location = ".".join(str(x) for x in first.get("loc", []))
         raise HTTPException(422, f"Invalid record at {location}: {first.get('msg', 'validation failed')}") from exc
+
+
+def _parse_csv_rows(raw: bytes, model, noun: str):
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(422, f"Could not read file as UTF-8 text: {exc}") from exc
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(422, f"The {noun} CSV has no header row.")
+    rows = list(reader)
+    try:
+        return TypeAdapter(list[model]).validate_python(rows)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        first = errors[0] if errors else {}
+        loc = first.get("loc", [])
+        # loc[0] is the row index in the parsed list; +2 accounts for the
+        # header row and 0-indexing so this matches the line number a person
+        # would actually see if they opened the CSV in a spreadsheet.
+        row_number = (loc[0] + 2) if loc and isinstance(loc[0], int) else "?"
+        field = loc[1] if len(loc) > 1 else "?"
+        raise HTTPException(
+            422, f"Invalid {noun} CSV at row {row_number}, column {field!r}: {first.get('msg', 'validation failed')}"
+        ) from exc
+
+
+def parse_upload(raw: bytes):
+    return _parse_json_array(raw, UploadRecord, "search-result")
+
+
+def parse_domain_upload(raw: bytes):
+    return _parse_json_array(raw, DomainRecord, "company-domain")
+
+
+def parse_opportunity_upload(raw: bytes):
+    return _parse_csv_rows(raw, OpportunityRecord, "opportunity-scoring")
+
+
+def parse_supplier_types_upload(raw: bytes):
+    # Same CSV shape as the opportunity-scoring upload (Company Name +
+    # Supplier Type, plus whatever other columns the boss's export includes
+    # -- those extra columns are simply ignored here). Reusing OpportunityRecord
+    # means one export from the boss works for both the pipeline tab's
+    # supplier-types upload and the merge tab's opportunity upload.
+    return _parse_csv_rows(raw, OpportunityRecord, "supplier-types")
+
+
+def parse_people_upload(raw: bytes):
+    return _parse_csv_rows(raw, PersonRecord, "people")
 
 
 @asynccontextmanager
@@ -172,13 +228,66 @@ async def upload_and_process(background_tasks: BackgroundTasks, file: UploadFile
     return {"job_id": job_id, "new_candidates": new_count}
 
 
+@app.post("/api/uploads/domains")
+async def upload_domains(file: UploadFile = File(...)):
+    """Ingest a JSON file of {company_name, domain} pairs and attach the
+    domain to the matching existing company (matched the same way the
+    LinkedIn scrape upload groups companies, by normalize_company()).
+    This is a pure enrichment step -- it never creates new companies, since
+    a domain with no matching scrape round has nothing to attach to yet."""
+    records = parse_domain_upload(await file.read())
+    with SessionLocal.begin() as db:
+        result = apply_domain_records(db, records)
+    return {
+        "matched_count": len(result["matched"]),
+        "unmatched_count": len(result["unmatched"]),
+        "unmatched_company_names": result["unmatched"],
+    }
+
+
+@app.post("/api/uploads/opportunities")
+async def upload_opportunities(file: UploadFile = File(...)):
+    """Ingest the boss's opportunity-scoring CSV into OpportunityCompany --
+    a table that belongs entirely to the Merge & Export tab. Never creates
+    or modifies a Company row; the scraping pipeline is untouched."""
+    records = parse_opportunity_upload(await file.read())
+    with SessionLocal.begin() as db:
+        result = apply_opportunity_records(db, records)
+    return {
+        "created_count": len(result["created"]),
+        "updated_count": len(result["updated"]),
+        "created_company_names": result["created"],
+    }
+
+
+@app.post("/api/uploads/supplier-types")
+async def upload_supplier_types(file: UploadFile = File(...)):
+    """Pipeline-tab upload: same CSV shape as the opportunity-scoring CSV
+    (Company Name + Supplier Type; other columns are ignored), but this one
+    writes Supplier Type directly onto an EXISTING company's industry field
+    so next_persona() picks the right round sequence natively. Only updates
+    companies that haven't started scraping yet (rounds_completed == 0) --
+    a company already mid-round keeps its locked-in sequence, and a
+    company name with no match in companies is reported, not created."""
+    records = parse_supplier_types_upload(await file.read())
+    with SessionLocal.begin() as db:
+        result = apply_supplier_types(db, records)
+    return {
+        "updated_count": len(result["updated"]),
+        "skipped_locked_count": len(result["skipped_locked"]),
+        "unmatched_count": len(result["unmatched"]),
+        "skipped_locked_company_names": result["skipped_locked"],
+        "unmatched_company_names": result["unmatched"],
+    }
+
+
 def retryable_observation_count(db):
     return db.scalar(
         select(func.count()).select_from(Observation).where(Observation.processing_status.in_(["pending", "failed"]))
     ) or 0
 
 
-def company_payload(company):
+def company_payload(company, supplier_type_hint=None):
     winners = sorted(
         [candidate for candidate in company.candidates if candidate.is_winner],
         key=lambda c: (-(c.investment_score or 0), c.round_number, c.position),
@@ -186,11 +295,12 @@ def company_payload(company):
     return {
         "id": company.id,
         "display_name": company.display_name,
+        "domain": company.domain,
         "industry": company.industry,
         "status": company.status,
         "rounds_completed": company.rounds_completed,
         "roles_tried": company.roles_tried,
-        "next_role": next_persona(company),
+        "next_role": next_persona(company, supplier_type_hint=supplier_type_hint),
         "winners": [
             {
                 "id": c.id,
@@ -207,8 +317,9 @@ def company_payload(company):
 @app.get("/api/companies")
 def list_companies(db: Session = Depends(get_db)):
     companies = db.scalars(select(Company).options(selectinload(Company.candidates)).order_by(Company.display_name)).all()
+    hints = dict(db.execute(select(OpportunityCompany.name, OpportunityCompany.supplier_type)).all())
     return {
-        "companies": [company_payload(c) for c in companies],
+        "companies": [company_payload(c, supplier_type_hint=hints.get(c.name)) for c in companies],
         "industries": list(PERSONAS),
         "candidate_count": sum(len(c.candidates) for c in companies),
         "retryable_observation_count": retryable_observation_count(db),
@@ -225,7 +336,8 @@ def set_industry(company_id: int, update: IndustryUpdate, db: Session = Depends(
     company.industry = update.industry
     db.commit()
     db.refresh(company)
-    return company_payload(company)
+    hint = db.scalar(select(OpportunityCompany.supplier_type).where(OpportunityCompany.name == company.name))
+    return company_payload(company, supplier_type_hint=hint)
 
 
 @app.delete("/api/companies/{company_id}")
@@ -338,4 +450,19 @@ def export_audit(db: Session = Depends(get_db)):
         audit_csv(db),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="full-candidate-audit.csv"'},
+    )
+
+
+@app.post("/api/exports/merged.csv")
+async def export_merged(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Feature B: upload the people CSV (first_name, last_name, company_name,
+    company_url, email, linkedin_url) and immediately get back the merged
+    operational CSV -- this app's opportunity-scoring data plus winner-
+    candidate role/LinkedIn URL, joined in by company name. Read-only:
+    nothing in the existing pipeline (scoring, rounds, status) is touched."""
+    records = parse_people_upload(await file.read())
+    return Response(
+        merged_csv(db, records),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="merged-operational.csv"'},
     )

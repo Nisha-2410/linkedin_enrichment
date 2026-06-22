@@ -1,8 +1,8 @@
 {
-  "default": ["Operations Manager", "Warehouse Manager", "Director Operations", "Regional Operations Manager"],
-  "logistics": ["Operations Manager", "Warehouse Manager", "Director Operations", "Regional Operations Manager"],
-  "manufacturing": ["Operations Manager", "Plant Manager", "Director Operations", "Regional Operations"],
-  "healthcare": ["Operations Manager", "Director of Nursing", "Hospital Administrator", "Regional Director"],
-  "construction": ["Operations Manager", "Construction Manager", "Director Operations", "Area Manager"],
-  "transportation": ["Operations Manager", "Terminal Manager", "Director Operations", "Regional Operations"]
+  "default": ["Operations Manager", "Warehouse Manager", "General Manager", "Director of Operations"],
+  "Warehouse Staffing": ["Operations Manager", "Warehouse Manager", "General Manager", "Director of Operations"],
+  "Light Industrial Staffing": ["Operations Manager", "Plant Manager", "General Manager", "Director of Operations"],
+  "Skilled Industrial Staffing": ["Operations Manager", "Maintenance Manager", "General Manager", "Director of Operations"],
+  "General Labor Staffing": ["Operations Manager", "General Manager", "HR Manager", "Director of Operations"],
+  "Technical Staffing Firms": ["Operations Manager", "Facility Manager", "General Manager", "Director of Operations"]
 }

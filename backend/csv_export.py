@@ -4,8 +4,8 @@ import io
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .models import Candidate, Company
-from .services import candidate_display_name, next_persona
+from .models import Candidate, Company, OpportunityCompany
+from .services import build_merged_rows, candidate_display_name, next_persona
 
 
 def _csv_response(rows, fieldnames):
@@ -20,16 +20,28 @@ def still_needed_csv(db):
     companies = db.scalars(
         select(Company).where(Company.status == "needs_next_round").order_by(Company.display_name)
     ).all()
+    # state and supplier_type both come from OpportunityCompany (the merge
+    # tab's data), looked up read-only by name -- still_needed_csv never
+    # writes to either table. supplier_type feeds next_persona()'s hint so
+    # the suggested next role here matches what the pipeline table shows.
+    opportunity_rows = db.execute(
+        select(OpportunityCompany.name, OpportunityCompany.state, OpportunityCompany.supplier_type)
+    ).all()
+    states = {name: state for name, state, _ in opportunity_rows}
+    hints = {name: supplier_type for name, _, supplier_type in opportunity_rows}
     rows = [
         {
             "company_name": c.display_name,
+            "state": states.get(c.name) or "",
             "rounds_completed": c.rounds_completed,
             "roles_already_tried": " | ".join(c.roles_tried),
-            "suggested_next_role": next_persona(c) or "",
+            "suggested_next_role": next_persona(c, supplier_type_hint=hints.get(c.name)) or "",
         }
         for c in companies
     ]
-    return _csv_response(rows, ["company_name", "rounds_completed", "roles_already_tried", "suggested_next_role"])
+    return _csv_response(
+        rows, ["company_name", "state", "rounds_completed", "roles_already_tried", "suggested_next_role"]
+    )
 
 
 def final_csv(db, forced=False):
@@ -60,23 +72,64 @@ def final_csv(db, forced=False):
         if not winners:
             # Still emit one placeholder row so the company appears in the output
             rows.append({
-                "company_name": company.display_name,
-                "person_name": "",
-                "role_title": "",
-                "linkedin_url": "",
+                "first_name": "",
+                "last_name": "",
+                "company name": company.display_name,
+                "domain": company.domain or "",
             })
         else:
             for candidate in winners:
+                first_name, last_name = _split_name(_name(candidate.raw_title))
                 rows.append({
+                    "first_name": first_name,
+                    "last_name": last_name,
                     "company_name": company.display_name,
-                    "person_name": _name(candidate.raw_title),
-                    "role_title": candidate.raw_title,
-                    "linkedin_url": candidate.raw_url,
+                    "domain": company.domain or "",
                 })
 
-    fields = ["company_name", "person_name", "role_title", "linkedin_url"]
+    fields = ["first_name", "last_name", "company_name", "domain"]
     return _csv_response(rows, fields)
 
+
+def merged_csv(db, people_records):
+    """Feature B export: merge the uploaded people CSV with this app's own
+    opportunity-scoring data (Company fields set by apply_opportunity_records)
+    and winner-candidate role/LinkedIn URL (from the existing scrape
+    pipeline). See build_merged_rows() for the full pairing rules. This is a
+    standalone export -- it does not touch scoring, rounds, or status."""
+    merged = build_merged_rows(db, people_records)
+    rows = [
+        {
+            "company_name": row["company_name"],
+            "company_score": _number(row["opportunity_score"]),
+            "city": row["city"],
+            "state": row["state"],
+            "person_name": row["person_name"],
+            "email": row["email"],
+            "role": row["role"],
+            "linkedin_url": row["linkedin_url"],
+            "contact_details": row["contact_details"],
+            "ai_insight": row["ai_insight"],
+            "job_role_posted": row["job_role_posted"],
+            "supplier_type": row["supplier_type"],
+        }
+        for row in merged
+    ]
+    fields = [
+        "company_name",
+        "company_score",
+        "city",
+        "state",
+        "person_name",
+        "email",
+        "role",
+        "linkedin_url",
+        "contact_details",
+        "ai_insight",
+        "job_role_posted",
+        "supplier_type",
+    ]
+    return _csv_response(rows, fields)
 
 
 def audit_csv(db):
@@ -153,6 +206,19 @@ def audit_csv(db):
     return _csv_response(rows, fields)
 def _name(title):
     return candidate_display_name(title)
+
+
+def _split_name(full_name):
+    """Split a display name into (first_name, last_name).
+    First token is first_name; everything after is last_name. A single-word
+    name (e.g. just "Madonna", or an unparseable LinkedIn title) goes
+    entirely into first_name with an empty last_name rather than guessing."""
+    parts = (full_name or "").split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], " ".join(parts[1:])
 
 
 def _excerpt(snippet, length=240):
